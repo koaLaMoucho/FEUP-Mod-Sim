@@ -43,6 +43,68 @@ The principal objectives of this project are defined below:
 - Evaluate different allocation strategies:
 
 
+### System Model
 
+#### 1. Components and Entities
+
+1. **Users / Drivers**  
+   - Classes: `GENERAL`, `EV`, `PMR` (probabilities π_GEN, π_EV, π_PMR).  
+   - States: ARRIVING_QUEUE | ENTERING_GATE | SEARCHING | PARKED | HEADING_TO_EXIT | EXIT_QUEUE | EXITED.
+
+2. **Parking Spaces**  
+   - Zones/types: General, EV (Electric Vehicles), PMR (Reduced Mobility).  
+
+3. **Infrastructure Gates**  
+   - Entry: G_in gates, status UP/DOWN, service-time distribution S_in, queue Q_in(t).  
+   - Exit: G_out gates, status UP/DOWN, service-time distribution S_out, queue Q_out(t).
+
+4. **Internal Circulation**  
+   - Circulating vehicles N_circ(t) that affect travel/search time inside the lot.  
+   - Link travel time function T_link(t) capturing congestion effects.
+
+5. **Management**
+   - Pricing policy, quotas, allocation rules, reservation/auction modules.
+
+6. **External Environment**  
+   - Time of day, arrival intensity λ(t) (NHPP), nearby events, adoption rate of EV/PMR drivers.
+
+#### 2. System Variables
+
+1. **Drivers/Users**  
+    - Arrival time of driver i: `Arrival_i`
+    - State of driver i: `State_i` ∈ {ARRIVING_QUEUE, ENTERING_GATE, SEARCHING, PARKED, HEADING_TO_EXIT, EXIT_QUEUE, EXITED}
+    - Dwell time of driver i: `Dwell_i` ~ Distribution D
+    - Assigned parking space of driver i: `Space_i` ∈ {GEN, EV, PMR}
+    - *More variables to be defined based on strategies.*
+
+2. **Parking Spaces**
+    - Capacity of parking space type j: `C_j` for j ∈ {GEN, EV, PMR} 
+    - Occupancy at time t: `O_j(t)` for j ∈ {GEN, EV, PMR}
+    - Free spaces at time t: `F_j(t) = C_j - O_j(t)`
+    - *More variables to be defined based on strategies.*
+
+3. **Infrastructure Gates**
+    - Number of entry gates: `G_in`
+    - Number of exit gates: `G_out`
+    - Service time distribution at entry gates: `S_in`
+    - Service time distribution at exit gates: `S_out`
+    - Queue length at entry gates at time t: `Q_in(t)`
+    - Queue length at exit gates at time t: `Q_out(t)`
+    - *More variables to be defined based on strategies.*
+
+4. **Internal Circulation**
+    - Drivers searching for parking at time t: `N_searching(t)`
+    - Drivers leaving but on internal circulation at time t: `N_leaving(t)`
+    - Total circulating vehicles at time t: `N_circ(t) = N_searching(t) + N_leaving(t)`
+    - Link travel time at time t: `T_link(t)`
+    - *More variables to be defined based on strategies.*
+
+4. **Management**
+    - Current price: `P(t)`
+    - Cumulative revenue at time t: `R(t)`
+    - Allocation strategy in use: `Strategy(t)`
+    - *More variables to be defined based on strategies.*
+
+#### 3. Key Performance Indicators (KPIs)
 
 
