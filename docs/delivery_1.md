@@ -11,19 +11,21 @@
 
 ### Topic 
 
-The field of this project is Modelation and Simulation of Transportation Systems, addressing the management and optimization of urban parking.
+Urban parking management, or any other high demand parking area, is a problem that affects nearly every country in the world, especially very large and busy cities. Lack of parking spaces, innefficient parking management systems alongside growing demand are some of the main causes for this problem. By modeling the drivers as agents of the system, and the parking spaces as the resources to be managed, our simulation will allow the group to test different strategies and solutions to optimize a parking system. 
 
-Urban parking, or any other high demand parking area, is a modern problem that affects nearly every city in the world, mostly on developed countries. Lack of parking spaces, innefficient parking management and systems and absurd high demand are just some of the problems caused. By modeling the drivers as agents of the system, and the parking spaces as the resources to be managed, the simulation will allow us to test different strategies and solutions to optimize the urban parking system. 
+This project falls under the Modelation and Simulation of Transportation Systems field of action, particularly the management and optimization of parking.
 
-The project will focus on the parking lot allocation strategies in urban areas. The point is to evaluate the possible different approaches, such as first-come-first-serve, pre-booking, auctions, dynamic pricing, etc, to improve the efficiency indicators of the parking system, such as occupancy, waiting times, revenue and fairness.
+It will focus on parking lot allocation strategies and evaluating the possible different approaches, such as first-come-first-serve, pre-booking, auctions, dynamic pricing, etc. At the same time efficiency indicators for the parking system, like occupancy, waiting times, revenue and fairness iwll be monitored.
+
+This issue has a significant amount of scientific literature such as "Parking Policy and Urban Mobility Level of Service – System Dynamics as a Modelling Tool for Decision Making" by João P. R. Bernardino and Maurits van der Hoofd. Additionally the European Commission's, recently founded, Park4SUMP project focuses exactly on innovative urban parking management, highlighting the relevancy this topic still possesses.
 
 ### Problem Formulation
 
-From the point of view of Modelation and Simulation, the problem is how to efficiently distribute parking spaces to drivers in urban areas.
+From the point of view of Modelation and Simulation, the problem is how to efficiently distribute parking spaces to drivers.
 
 The simulation problem can be defined in the following way:
 
-- **Objective:** To modelate and analyze the dynamics of the interaction between drivers and parking spaces in urban areas, under different allocation strategies. The goal is to assess how these strategies impact key performance indicators (KPIs), such as #TODO.
+- **Objective:** To modelate and analyze the dynamics of the interaction between drivers and parking spaces in a parking lot, under different allocation strategies. The goal is to assess how these strategies impact the chosen key performance indicators (KPIs).
 
 - **What is to be simulated:** 
   - The arrival time of different type of vehicles and *stochastic* parking durations.
@@ -31,16 +33,20 @@ The simulation problem can be defined in the following way:
   - The impact of different strategies.
 
 - **Purpose:**
-    - To predict the parking system's behavior under various strategies and conditions.
-    - To compare these strategies **quantitatively** based on KPIs.
+    - Represent drivers as agents in an environment with a limited number of parking spaces, creating simulated parking lot dynamics.
+    - To compare different allocation and princing strategies **quantitatively** based on KPIs, identifying the best strategies to improve overall efficiency.
 
 
 ### Objectives
 
-The principal objectives of this project are defined below:
+The main objectives of this project is:
 
-- Analyze the system dynamics: To understand how urban parking systems behave under different amounts of demand, 
-- Evaluate different allocation strategies:
+- Analyze the system's dynamics and assess how parking systems behave under different distributions of demand and management strategies and which are the best ones.
+
+The developed model will be:
+
+- Descriptive because the it is used to represent and understand how a system currently works
+- Prescriptive because the group will compare strategies to find the best outcomes
 
 
 ### System Model
@@ -99,7 +105,7 @@ The principal objectives of this project are defined below:
     - Link travel time at time t: `T_link(t)`
     - *More variables to be defined based on strategies.*
 
-4. **Management**
+5. **Management**
     - Current price: `P(t)`
     - Cumulative revenue at time t: `R(t)`
     - Allocation strategy in use: `Strategy(t)`
@@ -107,4 +113,87 @@ The principal objectives of this project are defined below:
 
 #### 3. Key Performance Indicators (KPIs)
 
+Key Performance Indicators include (may be altered):
 
+- **Occupancy of Parking Lot**
+- **Turn-away Rate**
+- **Time in System**
+- **Access time decomposition** (gate wait + internal circulation + exit wait)
+
+In strategies with money allocations:
+
+- **Revenue Rate**
+
+### 4. Decision criterion /Operation policies / Scenarios
+
+The decision criterion is the optimization of parking system performance based on key KPIs.
+
+Operation policies and scenarios to be simulated include:
+
+- Baseline: First-Come-First-Serve (FCFS).
+
+- Reservation-Based: Pre-booking with guaranteed spots.
+
+- Market-Driven: Auction or bidding for available spaces.
+
+- Dynamic Pricing: Real-time price adjustment based on occupancy.
+
+### 4. Decision support model
+
+**Inputs - Uncontrollable / Exogenous**:
+
+- Arrival rate of vehicles λ(t) (demand intensity).
+
+- Vehicle type distribution (π_GEN, π_EV, π_PMR).
+
+- Parking duration distribution D.
+
+**Inputs - Controllable / Exogenous**:
+
+- Allocation strategy (FCFS, Pre-Booking, Auction, Dynamic Pricing).
+
+- Pricing policy parameters (base rate, adjustment rules).
+
+- Capacity configuration (C_GEN, C_EV, C_PMR).
+
+- Number of gates (G_in, G_out).
+
+**Output**:
+
+- Occupancy rate.
+
+- Turn-away rate.
+
+- Average waiting and search times.
+
+- Average time in system.
+
+- Revenue rate.
+
+### Data requirements
+
+Synthethic data will be generated through simulation, representing arrival rate of vehicles, vehicle type distribution, parking duration and other required data.
+
+All data will be self-generated allowing for quick changes in order to test differnt hypotesis and distributions. Parameter values will be defined based on realistic assumptions.
+
+- Drivers behave rationally according to the current operational policies.
+
+- EV, PMR and reserved spots will be respected by drivers.
+
+The systems space encompasses a closed parking lot which can only be accessed through gates (entry/exit) and has an internal circulation network. The system can be defined by the interactions between the driving agents with the parking infrastructure under particular operational policies.
+
+
+### Methods & Tools
+
+## TODO
+
+
+### Large Language Models
+
+An LLM was used as a refinement tool to help clarify ideas and support decision-making.
+
+For instance, it assisted in the debate of how to represent the PMR and EV reserved spots and what benefits/drawbacks this decision entailed.
+
+It also helped to confirm and validate possible doubts the group had regarding standard practices in simulation-based transportation system studies.
+
+Overall, the use of the LLM was positive by supporting and accelarating the project proposal process. Most importantly, an attentive and careful review of its sugestions was always employed, ensuring all content was correct and aligned with the group's vision.
