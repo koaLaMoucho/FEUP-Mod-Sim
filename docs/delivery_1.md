@@ -187,7 +187,7 @@ The systems space encompasses a closed parking lot which can only be accessed th
 
 The project is to developed using the **Python** language, as it provides a large range of libraries and tools for data analysis and simulation.
 
-Regarding the simulation environment, either the well known libraries **Simpy** or **Mesa** are going to be used, as they both allow us to asynchronously model discrete-event simulations and agent-based simulations, such as vehicles arrivals, gate queues, etc.
+Regarding the simulation environment, either the well known libraries **Simpy** or **Mesa** are going to be used (although we are more inclined towards **Mesa**), as they both allow us to asynchronously model discrete-event simulations and agent-based simulations, such as vehicles arrivals, gate queues, etc.
 
 The simulation will be built on Event-Oriented and Agent-based discrete models, to easily manage multiple entities.
 
