@@ -15,7 +15,7 @@ Urban parking management, or any other high demand parking area, is a problem th
 
 This project falls under the Modelation and Simulation of Transportation Systems field of action, particularly the management and optimization of parking.
 
-It will focus on parking lot allocation strategies and evaluating the possible different approaches, such as first-come-first-serve, pre-booking, auctions, dynamic pricing, etc. At the same time efficiency indicators for the parking system, like occupancy, waiting times, revenue and fairness iwll be monitored.
+It will focus on parking lot allocation strategies and evaluating the possible different approaches, such as first-come-first-serve, pre-booking, auctions, dynamic pricing, etc. At the same time efficiency indicators for the parking system, like occupancy, waiting times, revenue and fairness will be monitored.
 
 This issue has a significant amount of scientific literature such as "Parking Policy and Urban Mobility Level of Service – System Dynamics as a Modelling Tool for Decision Making" by João P. R. Bernardino and Maurits van der Hoofd. Additionally the European Commission's, recently founded, Park4SUMP project focuses exactly on innovative urban parking management, highlighting the relevancy this topic still possesses.
 
@@ -172,9 +172,9 @@ Operation policies and scenarios to be simulated include:
 
 ### Data requirements
 
-Synthethic data will be generated through simulation, representing arrival rate of vehicles, vehicle type distribution, parking duration and other required data.
+Synthetic data will be generated through simulation, representing arrival rate of vehicles, vehicle type distribution, parking duration and other required data.
 
-All data will be self-generated allowing for quick changes in order to test differnt hypotesis and distributions. Parameter values will be defined based on realistic assumptions.
+All data will be self-generated allowing for quick changes in order to test different hypothesis and distributions. Parameter values will be defined based on realistic assumptions.
 
 - Drivers behave rationally according to the current operational policies.
 
@@ -187,7 +187,7 @@ The systems space encompasses a closed parking lot which can only be accessed th
 
 The project is to developed using the **Python** language, as it provides a large range of libraries and tools for data analysis and simulation.
 
-Regarding the simulation environment, either the well known libraries **Simpy** or **Mesa** are going to be used (although we are more inclined towards **Mesa**), as they both allow us to asynchronously model discrete-event simulations and agent-based simulations, such as vehicles arrivals, gate queues, etc.
+Regarding the simulation environment, either the well known libraries **Simpy** or **Mesa** are going to be used (although we are more inclined towards **Mesa**), as they allow us to asynchronously model discrete-event simulations and agent-based simulations, such as vehicles arrivals, gate queues, etc.
 
 The simulation will be built on Event-Oriented and Agent-based discrete models, to easily manage multiple entities.
 
