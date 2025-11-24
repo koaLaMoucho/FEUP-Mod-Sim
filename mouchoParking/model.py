@@ -213,18 +213,16 @@ class ParkingLotModel(Model):
     Minimal private parking lot:
     - Small grid
     - Single gate in, single gate out
-    - Few spaces
-    - Only spawn a car if there is at least one space free AND unreserved
-    - No two cars ever share the same cell
+    - Two rows of parking (top and bottom), each with n_spaces
     """
 
     def __init__(
         self,
-        width=10,
-        height=5,
-        n_spaces=4,
-        arrival_prob=0.05,
-        max_cars=1,
+        width,
+        height,
+        n_spaces,       # spaces per row (top and bottom)
+        arrival_prob,
+        max_cars,
         seed=None,
     ):
         super().__init__(seed=seed)
@@ -237,31 +235,40 @@ class ParkingLotModel(Model):
         # KPIs
         self.parked_count = 0
 
-        # layout: simple
-        self.entry_pos = (0, height // 2)
-        self.exit_pos = (width - 1, height // 2)
+        # ----- LAYOUT -----
+        # road row in the middle
+        self.road_y = height // 2
+
+        # entry and exit on the road row
+        self.entry_pos = (0, self.road_y)
+        self.exit_pos  = (width - 1, self.road_y)
 
         # Gates
         self.entry_gate = Gate(self.next_id(), self, self.entry_pos, "IN")
-        self.exit_gate = Gate(self.next_id(), self, self.exit_pos, "OUT")
+        self.exit_gate  = Gate(self.next_id(), self, self.exit_pos, "OUT")
         self.grid.place_agent(self.entry_gate, self.entry_gate.pos)
         self.grid.place_agent(self.exit_gate, self.exit_gate.pos)
         self.scheduler.add(self.entry_gate)
         self.scheduler.add(self.exit_gate)
 
-        # Parking spaces: a small line below the gate row
+        # Parking spaces:
+        #   one row above the road (self.road_y - 1)
+        #   one row below the road (self.road_y + 1)
         self.parking_spaces = []
-        bay_y = self.entry_pos[1] + 1
-        start_x = 2
-        for i in range(n_spaces):
-            x = start_x + i
-            if x >= width - 1:
-                break
-            pos = (x, bay_y)
-            s = ParkingSpace(self.next_id(), self, pos)
-            self.parking_spaces.append(s)
-            self.grid.place_agent(s, pos)
-            self.scheduler.add(s)
+        start_x = 2  # first column with parking, leave space after entry
+        parking_rows = [self.road_y - 1, self.road_y + 1]
+
+        for row in parking_rows:
+            for i in range(n_spaces):
+                x = start_x + i
+                # don't overwrite the exit column
+                if x >= width - 1:
+                    break
+                pos = (x, row)
+                s = ParkingSpace(self.next_id(), self, pos)
+                self.parking_spaces.append(s)
+                self.grid.place_agent(s, pos)
+                self.scheduler.add(s)
 
         # lookup
         self.space_by_id = {s.unique_id: s for s in self.parking_spaces}
@@ -270,11 +277,12 @@ class ParkingLotModel(Model):
         self.datacollector = DataCollector(
             model_reporters={
                 "OccupiedSpaces": lambda m: sum(1 for s in m.parking_spaces if s.occupied),
-                "FreeSpaces": lambda m: sum(1 for s in m.parking_spaces if not s.occupied),
-                "NumDrivers": self.get_num_drivers,
-                "ParkedCount": lambda m: m.parked_count,
+                "FreeSpaces":     lambda m: sum(1 for s in m.parking_spaces if not s.occupied),
+                "NumDrivers":     self.get_num_drivers,
+                "ParkedCount":    lambda m: m.parked_count,
             }
         )
+
 
     # ---------- Helpers ----------
     def is_parking_cell(self, pos):

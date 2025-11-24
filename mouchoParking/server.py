@@ -1,4 +1,5 @@
 # server.py
+from random import random
 from mesa.visualization.modules import CanvasGrid, ChartModule
 from mesa.visualization.ModularVisualization import ModularServer
 from model import ParkingLotModel, ParkingSpace, Driver, Gate
@@ -42,7 +43,7 @@ def agent_portrayal(agent):
 
 
 def make_server(port=8521):
-    width, height = 10, 5
+    width, height = 12, 5
 
     grid = CanvasGrid(agent_portrayal, width, height, 500, 250)
 
@@ -62,9 +63,9 @@ def make_server(port=8521):
         {
             "width": width,
             "height": height,
-            "n_spaces": 4,
-            "arrival_prob": 0.05,  # very few arrivals
-            "max_cars": 3,
+            "n_spaces": 8,
+            "arrival_prob": 0.4,  # very few arrivals
+            "max_cars": 16,
         },
     )
     server.port = port
