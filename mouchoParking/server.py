@@ -31,19 +31,34 @@ def agent_portrayal(agent):
         }
 
     if isinstance(agent, Driver):
-        return {
-            "Shape": "circle",
-            "r": 0.5,
-            "Filled": "true",
-            "Color": "#0066cc",
-            "Layer": 3,
-        }
+        # same colour for whole life, defined only in Driver.__init__
+        color = agent.color
 
-    return {}
+        if agent.state == "EXITING":
+            # smaller square so it doesn’t paint the whole cell
+            return {
+                "Shape": "rect",
+                "w": 0.4,
+                "h": 0.4,
+                "Filled": "true",
+                "Color": color,
+                "Layer": 3,
+            }
+        else:
+            # normal circle
+            return {
+                "Shape": "circle",
+                "r": 0.8,
+                "Filled": "true",
+                "Color": color,
+                "Layer": 3,
+            }
+
+
 
 
 def make_server(port=8521):
-    width, height = 12, 5
+    width, height = 30, 5
 
     grid = CanvasGrid(agent_portrayal, width, height, 500, 250)
 
@@ -52,6 +67,8 @@ def make_server(port=8521):
             {"Label": "OccupiedSpaces", "Color": "#444444"},
             {"Label": "FreeSpaces", "Color": "#888888"},
             {"Label": "NumDrivers", "Color": "#0066cc"},
+            {"Label": "CarsInside", "Color": "#00aa00"},
+            {"Label": "CarsWaitingAtGate", "Color": "#aa0000"},
         ],
         data_collector_name="datacollector",
     )
@@ -64,8 +81,7 @@ def make_server(port=8521):
             "width": width,
             "height": height,
             "n_spaces": 8,
-            "arrival_prob": 0.4,  # very few arrivals
-            "max_cars": 16,
+            "arrival_prob": 0.4,
         },
     )
     server.port = port
