@@ -5,8 +5,9 @@ from mesa.datacollection import DataCollector
 import math, random
 
 
+
 def parking_duration_steps(rng=random):
-    return rng.randint(40, 80)
+    return rng.randint(70, 300)
 
 
 class ParkingSpace(Agent):
@@ -41,6 +42,7 @@ class Driver(Agent):
         super().__init__(unique_id, model)
         self.state = "ARRIVING"
         self.waiting_for_gate = False
+        self.belt_lane_y = None
 
 
         self.color = "#%06x" % self.random.randrange(0, 0xFFFFFF)
@@ -68,9 +70,10 @@ class Driver(Agent):
             # At gate_2
             if (x, y) == (gx, gy):
                 if self.model.free_unreserved_capacity() > 0:
+                    # choose spot and enter park in this tick
                     self.target_space_id = self.model.get_free_unreserved_space_id()
+                    self._set_belt_lane_from_target()
                     self.model.cars_inside += 1
-                    self.waiting_for_gate = False
                     self.state = "DRIVING_TO_SPOT"
                 else:
                     self.waiting_for_gate = True
@@ -97,16 +100,15 @@ class Driver(Agent):
             # car at the gate cell
             if (x, y) == (gx, gy):
                 if self.model.free_unreserved_capacity() > 0:
-                    # leave waiting count
-                    
-
+                    # ficou espaço -> entra imediatamente
                     self.target_space_id = self.model.get_free_unreserved_space_id()
+                    self._set_belt_lane_from_target()
                     self.model.cars_inside += 1
                     self.waiting_for_gate = False
                     self.state = "DRIVING_TO_SPOT"
-                # if still full: just stay on the gate cell
                 else:
-                    self.waiting_for_gate = True    
+                    # parque continua cheio -> continua a esperar
+                    self.waiting_for_gate = True
                 return
 
             # carros atrás do portão tentam aproximar-se (andar para a direita)
@@ -171,6 +173,7 @@ class Driver(Agent):
         x, y = self.pos
         tx, ty = space.pos
 
+        # already on the bay
         if (x, y) == (tx, ty):
             if not space.occupied:
                 space.occupied = True
@@ -180,28 +183,73 @@ class Driver(Agent):
                 self.model.parked_count += 1
             return
 
+        # ---- decide lane for this bay (middle lane of its belt) ----
+        lane_y = self.belt_lane_y if self.belt_lane_y is not None else self.model.roa
+
+        start_x = self.model.parking_start_x
+
+        # ---- movement priority ----
         nx, ny = x, y
-        if  y < ty:
-            ny = y + 1
-        elif y > ty:
-            ny = y - 1
-        elif x < tx:
-            nx = x + 1
-        elif x > tx:
-            nx = x - 1
+
+        if x <= start_x and y != lane_y:
+            # we are before the parking area: go vertically to the belt lane
+            ny = y + 1 if y < lane_y else y - 1
+            nx = x
+
+        elif y == lane_y and x != tx:
+            # on the belt lane: move horizontally to align with the bay
+            nx = x + 1 if x < tx else x - 1
+            ny = y
+
+        elif x == tx and y != ty:
+            # aligned in x and on/near lane: move vertically into the bay row
+            ny = y + 1 if y < ty else y - 1
+            nx = x
+
+        else:
+            # fallback: simple Manhattan toward target (rare edge cases)
+            if x < tx:
+                nx = x + 1
+                ny = y
+            elif x > tx:
+                nx = x - 1
+                ny = y
+            elif y < ty:
+                nx = x
+                ny = y + 1
+            elif y > ty:
+                nx = x
+                ny = y - 1
 
         prev = self.pos
         self.try_move_to((nx, ny))
 
+        # if after moving we are actually on our bay, park atomically
         if self.pos == space.pos and not space.occupied:
             space.occupied = True
             space.occupant_id = self.unique_id
             self.current_space_id = space.unique_id
             self.state = "PARKED"
             self.model.parked_count += 1
+    
+    def _set_belt_lane_from_target(self):
+        """
+        Decide which belt lane (middle row of the belt) this car belongs to,
+        based on the target parking space.
+        """
+        lane_y = self.model.road_y
+        if self.target_space_id is not None:
+            sx, sy = self.model.space_by_id[self.target_space_id].pos
+            for mid_y in getattr(self.model, "belt_mid_rows", []):
+                if abs(sy - mid_y) == 1:
+                    lane_y = mid_y
+                    break
+        self.belt_lane_y = lane_y
+
 
     # ---------- Movement to exit ----------
     def drive_to_exit(self):
+        # identify the space we are leaving (for freeing)
         space = None
         if self.target_space_id is not None:
             space = self.model.space_by_id[self.target_space_id]
@@ -211,6 +259,7 @@ class Driver(Agent):
         ex, ey = self.model.exit_gate.pos
         road_y = self.model.road_y
 
+        # reached exit: leave the system
         if (x, y) == (ex, ey):
             self.state = "EXITED"
             self.model.cars_inside -= 1
@@ -218,22 +267,47 @@ class Driver(Agent):
             self.model.scheduler.remove(self)
             return
 
-        if y != road_y:
-            ny = road_y
+        # ---- lane for this car's belt ----
+        lane_y = self.belt_lane_y if self.belt_lane_y is not None else road_y
+
+        parking_end_x = getattr(self.model, "parking_end_x", self.model.parking_start_x)
+
+        # ---- movement priority (reverse of entry) ----
+        nx, ny = x, y
+
+        if x <= parking_end_x and y != lane_y:
+            # still inside the parking columns: go vertically to the belt lane
+            ny = y + 1 if y < lane_y else y - 1
             nx = x
+
+        elif x <= parking_end_x and y == lane_y:
+            # on the belt lane inside parking area: move right out of the bays
+            nx = x + 1
+            ny = y
+
+        elif x > parking_end_x and y != road_y:
+            # to the right of parking: drop to main road (no bays here)
+            ny = y + 1 if y < road_y else y - 1
+            nx = x
+
         else:
+            # on main road to the right of parking: go horizontally to exit
             nx, ny = x, y
             if x < ex:
                 nx = x + 1
             elif x > ex:
                 nx = x - 1
 
+        # move with collision + no-drive-through-bays logic
         self.try_move_to((nx, ny))
 
+        # after moving: if we just left the parking space cell, free it now
         if space is not None and prev == space.pos and self.pos != space.pos:
             space.occupied = False
             space.occupant_id = None
             self.target_space_id = None
+
+
 
 
 class ParkingLotModel(Model):
@@ -268,42 +342,43 @@ class ParkingLotModel(Model):
 
        
 
-        self.parking_spaces = []
-        start_x = width // 2 - n_spaces // 2
-        parking_rows = [self.road_y - 1, self.road_y + 1]
+        
+        
 
         self.parking_spaces = []
 
         # same horizontal start for all belts
         start_x = width // 2 - n_spaces // 2
+        self.parking_start_x = start_x  # used by drivers for path planning
 
-        # we create 3 belts of parking:
-        # one centered at road_y (current),
-        # one above, one below.
-        # each belt has two rows: (mid_y - 1) and (mid_y + 1)
-        belt_offsets = [-3, 0, 3]  # vertical offsets of each belt's "middle" relative to road_y
-        
+        # middle rows of each belt (one above, one middle, one below)
+        belt_offsets = [-3, 0, 3]
+        self.belt_mid_rows = []
         parking_rows = []
 
         for offset in belt_offsets:
             mid_y = self.road_y + offset
-            rows_for_belt = [mid_y - 1, mid_y + 1]
-            for row in rows_for_belt:
-                # keep only rows inside the grid
-                if 0 <= row < height:
-                    parking_rows.append(row)
+            # keep only belts fully inside the grid
+            if 0 <= mid_y - 1 < height and 0 <= mid_y + 1 < height:
+                self.belt_mid_rows.append(mid_y)
+                rows_for_belt = [mid_y - 1, mid_y + 1]
+                parking_rows.extend(rows_for_belt)
 
         # build spaces on all selected rows, same x-range for all
+        last_parking_x = start_x
         for row in parking_rows:
             for i in range(n_spaces):
                 x = start_x + i
                 if x >= width - 1:
                     break
+                last_parking_x = x
                 pos = (x, row)
                 s = ParkingSpace(self.next_id(), self, pos)
                 self.parking_spaces.append(s)
                 self.grid.place_agent(s, pos)
                 self.scheduler.add(s)
+        
+        self.parking_end_x = last_parking_x
 
 
         self.space_by_id = {s.unique_id: s for s in self.parking_spaces}
