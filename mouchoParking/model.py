@@ -40,7 +40,8 @@ class Driver(Agent):
     def __init__(self, unique_id, model, parking_duration=None):
         super().__init__(unique_id, model)
         self.state = "ARRIVING"
-        self.is_counted_waiting = False
+        self.waiting_for_gate = False
+
 
         self.color = "#%06x" % self.random.randrange(0, 0xFFFFFF)
 
@@ -68,22 +69,28 @@ class Driver(Agent):
             if (x, y) == (gx, gy):
                 if self.model.free_unreserved_capacity() > 0:
                     self.target_space_id = self.model.get_free_unreserved_space_id()
+                    self.model.cars_inside += 1
+                    self.waiting_for_gate = False
                     self.state = "DRIVING_TO_SPOT"
                 else:
+                    self.waiting_for_gate = True
                     self.state = "WAITING_AT_GATE"
                 return
 
             # Move right toward gate_2 if free
             nx, ny = x + 1, y
+            old_pos = self.pos
             self.try_move_to((nx, ny))
+            #Se nao conseguir andar pra frente é porque tá a esperar na fila
+            if self.pos == old_pos and self.model.free_unreserved_capacity() == 0:
+                self.waiting_for_gate = True
+            else:
+                self.waiting_for_gate = False
             return
 
         # ---------------- WAITING_AT_GATE ----------------
         if self.state == "WAITING_AT_GATE":
-            if not self.is_counted_waiting:
-                self.model.cars_waiting_at_gate += 1
-                self.is_counted_waiting = True
-
+            
             x, y = self.pos
             gx, gy = self.model.entry_gate_2.pos
 
@@ -91,20 +98,27 @@ class Driver(Agent):
             if (x, y) == (gx, gy):
                 if self.model.free_unreserved_capacity() > 0:
                     # leave waiting count
-                    if self.is_counted_waiting:
-                        self.model.cars_waiting_at_gate -= 1
-                        self.is_counted_waiting = False
+                    
 
                     self.target_space_id = self.model.get_free_unreserved_space_id()
                     self.model.cars_inside += 1
+                    self.waiting_for_gate = False
                     self.state = "DRIVING_TO_SPOT"
                 # if still full: just stay on the gate cell
+                else:
+                    self.waiting_for_gate = True    
                 return
 
-            # cars behind the gate move forward in the queue (towards gate_2)
+            # carros atrás do portão tentam aproximar-se (andar para a direita)
             nx, ny = x + 1, y
+            old_pos = self.pos
             self.try_move_to((nx, ny))
-            return
+
+            # se não se mexeu e o parque está cheio, está (ou permanece) em fila para o portão
+            if self.pos == old_pos and self.model.free_unreserved_capacity() == 0:
+                self.waiting_for_gate = True
+            else:
+                self.waiting_for_gate = False
 
 
 
@@ -231,7 +245,6 @@ class ParkingLotModel(Model):
         self.arrival_prob = arrival_prob
 
         self.cars_inside = 0
-        self.cars_waiting_at_gate = 0
 
         self.parked_count = 0
 
@@ -278,8 +291,16 @@ class ParkingLotModel(Model):
                 "NumDrivers": self.get_num_drivers,
                 "ParkedCount": lambda m: m.parked_count,
                 "CarsInside": lambda m: m.cars_inside,
-                "CarsWaitingAtGate": lambda m: m.cars_waiting_at_gate,
+                "CarsWaitingAtGate": lambda m: m.cars_waiting_for_gate(),
+
             }
+        )
+
+    def cars_waiting_for_gate(self):
+        return sum(
+            1
+            for a in self.scheduler.agents
+            if isinstance(a, Driver) and getattr(a, "waiting_for_gate", False)
         )
 
     def is_parking_cell(self, pos):
