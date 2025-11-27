@@ -58,7 +58,7 @@ def agent_portrayal(agent):
 
 
 def make_server(port=8521):
-    width, height = 30, 5
+    width, height = 25, 12
 
     grid = CanvasGrid(agent_portrayal, width, height, 500, 250)
 

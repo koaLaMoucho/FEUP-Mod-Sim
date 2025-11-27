@@ -181,14 +181,14 @@ class Driver(Agent):
             return
 
         nx, ny = x, y
-        if x < tx:
-            nx = x + 1
-        elif x > tx:
-            nx = x - 1
-        elif y < ty:
+        if  y < ty:
             ny = y + 1
         elif y > ty:
             ny = y - 1
+        elif x < tx:
+            nx = x + 1
+        elif x > tx:
+            nx = x - 1
 
         prev = self.pos
         self.try_move_to((nx, ny))
@@ -251,26 +251,49 @@ class ParkingLotModel(Model):
         self.road_y = height // 2
 
         self.entry_pos = (0, self.road_y)
-        self.exit_pos = (width - 1, self.road_y)
-
-        self.entry_gate = Gate(self.next_id(), self, self.entry_pos, "IN")
-        self.exit_gate = Gate(self.next_id(), self, self.exit_pos, "OUT")
-        self.grid.place_agent(self.entry_gate, self.entry_gate.pos)
-        self.grid.place_agent(self.exit_gate, self.exit_gate.pos)
-        self.scheduler.add(self.entry_gate)
-        self.scheduler.add(self.exit_gate)
-
-        second_entry_x = self.entry_pos[0] + 8
+        second_entry_x = self.entry_pos[0] + width // 4
         second_entry_pos = (second_entry_x, self.road_y)
 
+        self.exit_pos = (second_entry_x + n_spaces + 5, self.road_y)
+
+        self.entry_gate = Gate(self.next_id(), self, self.entry_pos, "IN")
         self.entry_gate_2 = Gate(self.next_id(), self, second_entry_pos, "IN")
+        self.exit_gate = Gate(self.next_id(), self, self.exit_pos, "OUT")
+        self.grid.place_agent(self.entry_gate, self.entry_gate.pos)       
         self.grid.place_agent(self.entry_gate_2, second_entry_pos)
+        self.grid.place_agent(self.exit_gate, self.exit_gate.pos)
+        self.scheduler.add(self.entry_gate)
         self.scheduler.add(self.entry_gate_2)
+        self.scheduler.add(self.exit_gate)
+
+       
 
         self.parking_spaces = []
         start_x = width // 2 - n_spaces // 2
         parking_rows = [self.road_y - 1, self.road_y + 1]
 
+        self.parking_spaces = []
+
+        # same horizontal start for all belts
+        start_x = width // 2 - n_spaces // 2
+
+        # we create 3 belts of parking:
+        # one centered at road_y (current),
+        # one above, one below.
+        # each belt has two rows: (mid_y - 1) and (mid_y + 1)
+        belt_offsets = [-3, 0, 3]  # vertical offsets of each belt's "middle" relative to road_y
+        
+        parking_rows = []
+
+        for offset in belt_offsets:
+            mid_y = self.road_y + offset
+            rows_for_belt = [mid_y - 1, mid_y + 1]
+            for row in rows_for_belt:
+                # keep only rows inside the grid
+                if 0 <= row < height:
+                    parking_rows.append(row)
+
+        # build spaces on all selected rows, same x-range for all
         for row in parking_rows:
             for i in range(n_spaces):
                 x = start_x + i
@@ -281,6 +304,7 @@ class ParkingLotModel(Model):
                 self.parking_spaces.append(s)
                 self.grid.place_agent(s, pos)
                 self.scheduler.add(s)
+
 
         self.space_by_id = {s.unique_id: s for s in self.parking_spaces}
 
