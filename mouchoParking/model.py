@@ -11,9 +11,10 @@ def parking_duration_steps(rng=random):
 
 
 class ParkingSpace(Agent):
-    def __init__(self, unique_id, model, pos):
+    def __init__(self, unique_id, model, pos, space_type="GENERAL"):
         super().__init__(unique_id, model)
         self.pos = pos
+        self.space_type = space_type
         self.occupied = False
         self.occupant_id = None
 
@@ -311,24 +312,30 @@ class Driver(Agent):
 
 
 class ParkingLotModel(Model):
-    def __init__(self, width, height, n_spaces, arrival_prob, seed=None):
+    def __init__(self, width, height, n_spaces, arrival_prob, n_ev=0, n_pmr=0, seed=None):
         super().__init__(seed=seed)
+        self.width = width
+        self.height = height
         self.grid = MultiGrid(width, height, torus=False)
         self.scheduler = RandomActivation(self)
 
+        self.n_spaces = n_spaces
+
+        self.n_ev = n_ev
+        self.n_pmr = n_pmr
+        #self.n_gen = max(0, n_spaces - n_ev - n_pmr)
+
+
         self.arrival_prob = arrival_prob
-
         self.cars_inside = 0
-
         self.parked_count = 0
 
         self.road_y = height // 2
-
         self.entry_pos = (0, self.road_y)
         second_entry_x = self.entry_pos[0] + width // 4
         second_entry_pos = (second_entry_x, self.road_y)
-
         self.exit_pos = (second_entry_x + n_spaces + 5, self.road_y)
+
 
         self.entry_gate = Gate(self.next_id(), self, self.entry_pos, "IN")
         self.entry_gate_2 = Gate(self.next_id(), self, second_entry_pos, "IN")
@@ -340,46 +347,54 @@ class ParkingLotModel(Model):
         self.scheduler.add(self.entry_gate_2)
         self.scheduler.add(self.exit_gate)
 
-       
-
-        
-        
-
         self.parking_spaces = []
-
-        # same horizontal start for all belts
-        start_x = width // 2 - n_spaces // 2
-        self.parking_start_x = start_x  # used by drivers for path planning
-
-        # middle rows of each belt (one above, one middle, one below)
-        belt_offsets = [-3, 0, 3]
+        self.parking_start_x = width // 2 - n_spaces // 2  # used by drivers for path planning
+        belt_offsets = [-3, 0, 3]         # middle rows of each belt (one above, one middle, one below)
         self.belt_mid_rows = []
         parking_rows = []
-
+        
         for offset in belt_offsets:
             mid_y = self.road_y + offset
-            # keep only belts fully inside the grid
             if 0 <= mid_y - 1 < height and 0 <= mid_y + 1 < height:
                 self.belt_mid_rows.append(mid_y)
-                rows_for_belt = [mid_y - 1, mid_y + 1]
-                parking_rows.extend(rows_for_belt)
+                parking_rows.extend([mid_y - 1, mid_y + 1])
+
 
         # build spaces on all selected rows, same x-range for all
-        last_parking_x = start_x
+        parking_positions = []
+        last_parking_x = self.parking_start_x
         for row in parking_rows:
             for i in range(n_spaces):
-                x = start_x + i
+                x = self.parking_start_x + i
                 if x >= width - 1:
                     break
                 last_parking_x = x
-                pos = (x, row)
-                s = ParkingSpace(self.next_id(), self, pos)
-                self.parking_spaces.append(s)
-                self.grid.place_agent(s, pos)
-                self.scheduler.add(s)
-        
+                parking_positions.append((x, row))
         self.parking_end_x = last_parking_x
 
+
+        total_positions = len(parking_positions)
+        pmr_to_place = min(self.n_pmr, total_positions)
+        ev_to_place = min(self.n_ev, max(0, total_positions - pmr_to_place))
+
+        sorted_positions = sorted(
+            parking_positions, key=lambda p: (p[0], abs(p[1] - self.road_y))
+        )
+
+        pmr_positions = set(sorted_positions[:pmr_to_place])
+        ev_positions = set(sorted_positions[pmr_to_place: pmr_to_place + ev_to_place])
+
+        for pos in parking_positions:
+            if pos in pmr_positions:
+                stype = "PMR"
+            elif pos in ev_positions:
+                stype = "EV"
+            else:
+                stype = "GENERAL"
+            s = ParkingSpace(self.next_id(), self, pos, space_type=stype)
+            self.parking_spaces.append(s)
+            self.grid.place_agent(s, pos)
+            self.scheduler.add(s)
 
         self.space_by_id = {s.unique_id: s for s in self.parking_spaces}
 
@@ -394,6 +409,8 @@ class ParkingLotModel(Model):
 
             }
         )
+
+        self.datacollector.collect(self)
 
     def cars_waiting_for_gate(self):
         return sum(

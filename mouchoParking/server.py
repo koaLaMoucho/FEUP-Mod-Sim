@@ -18,9 +18,17 @@ def agent_portrayal(agent):
         }
 
     if isinstance(agent, ParkingSpace):
-        color = "#cccccc"
+        # color by space type (EV/PMR/GENERAL), then override if occupied
+        if agent.space_type == "EV":
+            color = "#88ccff"  # light blue for EV
+        elif agent.space_type == "PMR":
+            color = "#ffcc88"  # light orange for PMR
+        else:
+            color = "#cccccc"  # light gray for GENERAL
+
         if agent.occupied:
-            color = "#ff5555"
+            color = "#ff4444"  # red if occupied (overrides type color)
+
         return {
             "Shape": "rect",
             "w": 0.9,
@@ -58,7 +66,7 @@ def agent_portrayal(agent):
 
 
 def make_server(port=8521):
-    width, height = 25, 12
+    width, height = 35, 12
 
     grid = CanvasGrid(agent_portrayal, width, height, 500, 250)
 
@@ -80,8 +88,10 @@ def make_server(port=8521):
         {
             "width": width,
             "height": height,
-            "n_spaces": 8,
+            "n_spaces": 14,
             "arrival_prob": 0.4,
+            "n_ev": 4,
+            "n_pmr": 2,
         },
     )
     server.port = port
