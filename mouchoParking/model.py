@@ -39,13 +39,13 @@ class Driver(Agent):
       -> DRIVING_TO_SPOT -> PARKED -> EXITING -> EXITED
     """
 
-    def __init__(self, unique_id, model, parking_duration=None):
+    def __init__(self, unique_id, model, driver_type="GENERAL", parking_duration=None):
         super().__init__(unique_id, model)
         self.state = "ARRIVING"
         self.waiting_for_gate = False
         self.belt_lane_y = None
 
-
+        self.driver_type = driver_type
         self.color = "#%06x" % self.random.randrange(0, 0xFFFFFF)
 
         self.target_space_id = None
@@ -70,15 +70,15 @@ class Driver(Agent):
 
             # At gate_2
             if (x, y) == (gx, gy):
-                if self.model.free_unreserved_capacity() > 0:
-                    # choose spot and enter park in this tick
-                    self.target_space_id = self.model.get_free_unreserved_space_id()
+                target_id = self.model.find_free_space_for(self.driver_type) 
+                if target_id is not None:
+                    self.target_space_id = target_id
                     self._set_belt_lane_from_target()
                     self.model.cars_inside += 1
+                    self.waiting_for_gate = False
                     self.state = "DRIVING_TO_SPOT"
                 else:
                     self.waiting_for_gate = True
-                    self.state = "WAITING_AT_GATE"
                 return
 
             # Move right toward gate_2 if free
@@ -86,7 +86,7 @@ class Driver(Agent):
             old_pos = self.pos
             self.try_move_to((nx, ny))
             #Se nao conseguir andar pra frente é porque tá a esperar na fila
-            if self.pos == old_pos and self.model.free_unreserved_capacity() == 0:
+            if self.pos == old_pos and self.model.find_free_space_for(self.driver_type) is None:
                 self.waiting_for_gate = True
             else:
                 self.waiting_for_gate = False
@@ -102,7 +102,7 @@ class Driver(Agent):
             if (x, y) == (gx, gy):
                 if self.model.free_unreserved_capacity() > 0:
                     # ficou espaço -> entra imediatamente
-                    self.target_space_id = self.model.get_free_unreserved_space_id()
+                    target_id = self.model.find_free_space_for(self.driver_type)
                     self._set_belt_lane_from_target()
                     self.model.cars_inside += 1
                     self.waiting_for_gate = False
@@ -349,7 +349,7 @@ class ParkingLotModel(Model):
 
         self.parking_spaces = []
         self.parking_start_x = width // 2 - n_spaces // 2  # used by drivers for path planning
-        belt_offsets = [-3, 0, 3]         # middle rows of each belt (one above, one middle, one below)
+        belt_offsets = [-6, -3, 0, 3, 6]         # middle rows of each belt (one above, one middle, one below)
         self.belt_mid_rows = []
         parking_rows = []
         
@@ -460,11 +460,111 @@ class ParkingLotModel(Model):
 
         if self.cell_has_driver(self.entry_pos):
             return
+        
+        reserved = self._reserved_space_ids()
+        free_gen = sum(
+            1 for s in self.parking_spaces
+            if (not s.occupied) and (s.unique_id not in reserved) and s.space_type == "GENERAL"
+        )
+        free_ev = sum(
+            1 for s in self.parking_spaces
+            if (not s.occupied) and (s.unique_id not in reserved) and s.space_type == "EV"
+        )
+        free_pmr = sum(
+            1 for s in self.parking_spaces
+            if (not s.occupied) and (s.unique_id not in reserved) and s.space_type == "PMR"
+        )
 
-        drv = Driver(self.next_id(), self)
+        # Choose driver type: weight by available spaces
+        total_free = free_gen + free_ev + free_pmr
+        if total_free == 0:
+            return  # no space available
+
+        rand = self.random.random()
+        if rand < free_gen / total_free:
+            driver_type = "GENERAL"
+        elif rand < (free_gen + free_ev) / total_free:
+            driver_type = "EV"
+        else:
+            driver_type = "PMR"
+
+        drv = Driver(self.next_id(), self, driver_type=driver_type)
         self.scheduler.add(drv)
 
     def step(self):
         self.maybe_arrive()
         self.scheduler.step()
         self.datacollector.collect(self)
+
+    def find_free_space_for(self, driver_type):
+        reserved = self._reserved_space_ids()
+        if driver_type == "EV":
+            # try EV first
+            matching = [
+                s for s in self.parking_spaces
+                if (not s.occupied) 
+                and (s.unique_id not in reserved)
+                and (s.space_type == "EV")
+            ]
+            if matching:
+                matching.sort(key=lambda s: s.pos[0])
+                return matching[0].unique_id
+            # fallback to GENERAL
+            matching = [
+                s for s in self.parking_spaces
+                if (not s.occupied) 
+                and (s.unique_id not in reserved)
+                and (s.space_type == "GENERAL")
+            ]
+            if matching:
+                matching.sort(key=lambda s: s.pos[0])
+                return matching[0].unique_id
+            return None
+
+        elif driver_type == "PMR":
+            # try PMR first
+            matching = [
+                s for s in self.parking_spaces
+                if (not s.occupied) 
+                and (s.unique_id not in reserved)
+                and (s.space_type == "PMR")
+            ]
+            if matching:
+                matching.sort(key=lambda s: s.pos[0])
+                return matching[0].unique_id
+            # fallback to GENERAL
+            matching = [
+                s for s in self.parking_spaces
+                if (not s.occupied) 
+                and (s.unique_id not in reserved)
+                and (s.space_type == "GENERAL")
+            ]
+            if matching:
+                matching.sort(key=lambda s: s.pos[0])
+                return matching[0].unique_id
+            return None
+
+        else:  # GENERAL
+            # GENERAL drivers use GENERAL spots only
+            matching = [
+                s for s in self.parking_spaces
+                if (not s.occupied) 
+                and (s.unique_id not in reserved)
+                and (s.space_type == "GENERAL")
+            ]
+            if matching:
+                matching.sort(key=lambda s: s.pos[0])
+                return matching[0].unique_id
+            return None
+    
+    def get_free_unreserved_space_id(self):
+        reserved = self._reserved_space_ids()
+        free = [
+            s for s in self.parking_spaces
+            if (not s.occupied) and (s.unique_id not in reserved)
+        ]
+        if not free:
+            return None
+        free.sort(key=lambda s: s.pos[0])
+        return free[0].unique_id
+

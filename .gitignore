@@ -1,1 +1,9 @@
-mouchoParking/_pycache__/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/

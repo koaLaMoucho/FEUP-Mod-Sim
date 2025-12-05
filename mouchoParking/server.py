@@ -39,11 +39,16 @@ def agent_portrayal(agent):
         }
 
     if isinstance(agent, Driver):
-        # same colour for whole life, defined only in Driver.__init__
         color = agent.color
 
+        symbol = ""
+        if agent.driver_type == "EV":
+            symbol = "−"  # minus/dash for EV
+        elif agent.driver_type == "PMR":
+            symbol = "+"  # plus for PMR
+
         if agent.state == "EXITING":
-            # smaller square so it doesn’t paint the whole cell
+            # smaller square so it doesn't paint the whole cell
             return {
                 "Shape": "rect",
                 "w": 0.4,
@@ -51,6 +56,8 @@ def agent_portrayal(agent):
                 "Filled": "true",
                 "Color": color,
                 "Layer": 3,
+                "text": symbol,
+                "text_color": "white",
             }
         else:
             # normal circle
@@ -60,13 +67,15 @@ def agent_portrayal(agent):
                 "Filled": "true",
                 "Color": color,
                 "Layer": 3,
+                "text": symbol,
+                "text_color": "white",
             }
 
 
 
 
 def make_server(port=8521):
-    width, height = 35, 12
+    width, height = 35, 15
 
     grid = CanvasGrid(agent_portrayal, width, height, 500, 250)
 
