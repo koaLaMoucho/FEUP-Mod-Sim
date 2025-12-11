@@ -7,7 +7,7 @@ import math, random
 
 
 def parking_duration_steps(rng=random):
-    return rng.randint(70, 300)
+    return rng.randint(500, 600)
 
 
 class ParkingSpace(Agent):
@@ -32,18 +32,11 @@ class Gate(Agent):
 
 
 class Driver(Agent):
-    """
-    States:
-      ARRIVING -> APPROACHING_GATE -> WAITING_AT_GATE
-      -> DRIVING_TO_SPOT -> PARKED -> EXITING -> EXITED
-    """
-
     def __init__(self, unique_id, model, parking_duration=None):
         super().__init__(unique_id, model)
         self.state = "ARRIVING"
         self.waiting_for_gate = False
         self.belt_lane_y = None
-
 
         self.color = "#%06x" % self.random.randrange(0, 0xFFFFFF)
 
@@ -53,7 +46,19 @@ class Driver(Agent):
         self.parking_duration = parking_duration or parking_duration_steps(rng=self.random)
         self.remaining_time = self.parking_duration
 
+        # --- timestamps para KPIs ---
+        self.arrival_step = None
+        self.queue_entry_step = None
+
+        # --- estado de abandono (balked) ---
+        self.balked = False
+
+
     def step(self):
+
+        if self.state == "BALKING":
+            self._balking_move()
+            return
 
         # ---------------- ARRIVING ----------------
         if self.state == "ARRIVING":
@@ -77,6 +82,7 @@ class Driver(Agent):
                     self.state = "DRIVING_TO_SPOT"
                 else:
                     self.waiting_for_gate = True
+                    self._start_queueing()
                     self.state = "WAITING_AT_GATE"
                 return
 
@@ -87,6 +93,8 @@ class Driver(Agent):
             #Se nao conseguir andar pra frente é porque tá a esperar na fila
             if self.pos == old_pos and self.model.free_unreserved_capacity() == 0:
                 self.waiting_for_gate = True
+                self._start_queueing()
+                self.state = "WAITING_AT_GATE"
             else:
                 self.waiting_for_gate = False
             return
@@ -101,14 +109,25 @@ class Driver(Agent):
             if (x, y) == (gx, gy):
                 if self.model.free_unreserved_capacity() > 0:
                     # ficou espaço -> entra imediatamente
+                    self._stop_queueing(entered=True)
                     self.target_space_id = self.model.get_free_unreserved_space_id()
                     self._set_belt_lane_from_target()
                     self.model.cars_inside += 1
                     self.waiting_for_gate = False
                     self.state = "DRIVING_TO_SPOT"
+                    return
+
                 else:
                     # parque continua cheio -> continua a esperar
                     self.waiting_for_gate = True
+
+                    if (
+                        self.queue_entry_step is not None and
+                        self.model.current_step - self.queue_entry_step >= self.model.max_wait_time
+                    ):
+                        self._balk_and_start_leaving()
+
+                    return
                 return
 
             # carros atrás do portão tentam aproximar-se (andar para a direita)
@@ -119,8 +138,16 @@ class Driver(Agent):
             # se não se mexeu e o parque está cheio, está (ou permanece) em fila para o portão
             if self.pos == old_pos and self.model.free_unreserved_capacity() == 0:
                 self.waiting_for_gate = True
-            else:
-                self.waiting_for_gate = False
+                if self.queue_entry_step is None:
+                    self._start_queueing()
+                # verificar tempo de espera para reneging
+                if (
+                    self.queue_entry_step is not None and
+                    self.model.current_step - self.queue_entry_step >= self.model.max_wait_time
+                ):
+                    self._balk_and_start_leaving()
+            
+                
 
 
 
@@ -147,6 +174,75 @@ class Driver(Agent):
             if self in self.model.scheduler.agents:
                 self.model.grid.remove_agent(self)
                 self.model.scheduler.remove(self)
+
+    def _start_queueing(self):
+        """Marcar que o condutor entrou em fila no portão."""
+        if self.queue_entry_step is None:
+            self.queue_entry_step = self.model.current_step
+
+    def _stop_queueing(self, entered: bool):
+        """Parar de contar fila; 'entered=True' só quando o carro entrou no parque."""
+        if self.queue_entry_step is not None:
+            q_time = self.model.current_step - self.queue_entry_step
+            self.model.total_queue_time += q_time
+            if entered:
+                self.model.total_queued_drivers += 1
+            self.queue_entry_step = None
+
+
+    def _balk_and_start_leaving(self):
+        self.balked = True
+        # fechar a contagem de tempo de fila, mas sem contar como "queued driver que entrou"
+        self._stop_queueing(entered=False)
+
+        self.model.total_turned_away += 1
+        self.model.total_balked += 1
+
+        self.waiting_for_gate = False
+        self.state = "BALKING"
+        self._balked_moved_down = False
+
+    
+    def _balking_move(self):
+        """
+        Movimento visual para quem estava na fila e desistiu (BALKING):
+        1) primeiro passo: desce 1 em y
+        2) depois: anda para a esquerda até alinhar com entry_pos.x
+        3) quando chega ao x do entry, desaparece
+        """
+        x, y = self.pos
+        entry_x, entry_y = self.model.entry_pos
+
+        # primeiro passo após sair da fila: descer 1 em y
+        if not getattr(self, "_balked_moved_down", False):
+            new_y = y + 1
+            if new_y < self.model.grid.height:
+                new_pos = (x, new_y)
+            else:
+                new_pos = (x, y)
+            self._balked_moved_down = True
+        else:
+            # depois, mover para a esquerda até x == entry_x
+            if x > entry_x:
+                new_x = x - 1
+                new_pos = (new_x, y)
+            else:
+                # já chegou "à entrada mas em y+1": remove o agente
+                if self in self.model.scheduler.agents:
+                    self.model.grid.remove_agent(self)
+                    self.model.scheduler.remove(self)
+                return
+
+        # tentar mover (ignoramos colisões de forma simples; se bloquear, removemos)
+        try:
+            self.model.grid.move_agent(self, new_pos)
+        except Exception:
+            # se der problema, simplesmente removemos para não estragar a simulação
+            if self in self.model.scheduler.agents:
+                self.model.grid.remove_agent(self)
+                self.model.scheduler.remove(self)
+
+
 
     # ---------- Collision + lane discipline ----------
     def try_move_to(self, new_pos):
@@ -232,6 +328,8 @@ class Driver(Agent):
             self.state = "PARKED"
             self.model.parked_count += 1
     
+    
+    
     def _set_belt_lane_from_target(self):
         """
         Decide which belt lane (middle row of the belt) this car belongs to,
@@ -311,34 +409,70 @@ class Driver(Agent):
 
 
 class ParkingLotModel(Model):
-    def __init__(self, width, height, n_spaces, arrival_prob, seed=None):
+    def __init__(
+        self,
+        width,
+        height,
+        n_spaces,
+        arrival_prob,
+        max_queue_length=10,
+        max_wait_time=50,
+        seed=None,
+    ):
         super().__init__(seed=seed)
         self.grid = MultiGrid(width, height, torus=False)
         self.scheduler = RandomActivation(self)
 
         self.arrival_prob = arrival_prob
 
-        self.cars_inside = 0
+        # --- parâmetros de comportamento na fila ---
+        self.max_queue_length = max_queue_length      # L: comprimento máximo da fila aceitável
+        self.max_wait_time = max_wait_time            # T: tempo máximo em fila (steps)
 
+        # --- time and KPI counters ---
+        self.current_step = 0
+
+        self.total_arrivals = 0
+
+        # turned-away total (qualquer motivo)
+        self.total_turned_away = 0
+
+        # 1) viu fila grande e nem entrou
+        self.total_not_entered_long_queue = 0
+
+        # 2) já estava na fila e desistiu (balked)
+        self.total_balked = 0
+
+        self.total_queue_time = 0
+        self.total_queued_drivers = 0
+
+        self.total_revenue = 0.0
+
+        self.cars_inside = 0
         self.parked_count = 0
+
+        ##positions
 
         self.road_y = height // 2
 
         self.entry_pos = (0, self.road_y)
-        second_entry_x = self.entry_pos[0] + width // 4
-        second_entry_pos = (second_entry_x, self.road_y)
 
-        self.exit_pos = (second_entry_x + n_spaces + 5, self.road_y)
+        min_width = n_spaces + 7  # 1 (entry) + 1 (second_entry) + 2 + n_spaces + 2 + 1 (exit)
+        if width < min_width:
+            raise ValueError(
+                f"Grid width {width} too small for {n_spaces} spaces; need at least {min_width}"
+            )
+
+
+        second_entry_x = width - (n_spaces + 6)
+        second_entry_pos = (second_entry_x, self.road_y)
 
         self.entry_gate = Gate(self.next_id(), self, self.entry_pos, "IN")
         self.entry_gate_2 = Gate(self.next_id(), self, second_entry_pos, "IN")
-        self.exit_gate = Gate(self.next_id(), self, self.exit_pos, "OUT")
         self.grid.place_agent(self.entry_gate, self.entry_gate.pos)       
         self.grid.place_agent(self.entry_gate_2, second_entry_pos)
-        self.grid.place_agent(self.exit_gate, self.exit_gate.pos)
         self.scheduler.add(self.entry_gate)
         self.scheduler.add(self.entry_gate_2)
-        self.scheduler.add(self.exit_gate)
 
        
 
@@ -348,11 +482,21 @@ class ParkingLotModel(Model):
         self.parking_spaces = []
 
         # same horizontal start for all belts
-        start_x = width // 2 - n_spaces // 2
-        self.parking_start_x = start_x  # used by drivers for path planning
+        
+        self.parking_start_x = second_entry_x + 3  # gate2 + 2 empty + 1st parking column
+        start_x = self.parking_start_x
 
+        
+        self.exit_pos = (self.parking_start_x + n_spaces + 2, self.road_y)
+        
+        self.exit_gate = Gate(self.next_id(), self, self.exit_pos, "OUT")
+        
+        self.grid.place_agent(self.exit_gate, self.exit_gate.pos)
+        
+        self.scheduler.add(self.exit_gate)
+        
         # middle rows of each belt (one above, one middle, one below)
-        belt_offsets = [-3, 0, 3]
+        belt_offsets = [-6, -3, 0, 3, 6]
         self.belt_mid_rows = []
         parking_rows = []
 
@@ -392,8 +536,18 @@ class ParkingLotModel(Model):
                 "CarsInside": lambda m: m.cars_inside,
                 "CarsWaitingAtGate": lambda m: m.cars_waiting_for_gate(),
 
+                # --- novos KPIs agregados ---
+                "TotalArrivals": lambda m: m.total_arrivals,
+                "TurnedAway": lambda m: m.total_turned_away,
+                "TotalQueueTime": lambda m: m.total_queue_time,
+                "TotalQueuedDrivers": lambda m: m.total_queued_drivers,
+                "AvgQueueTimeSoFar": lambda m: (
+                    m.total_queue_time / m.total_queued_drivers
+                    if m.total_queued_drivers > 0 else 0
+                ),
             }
         )
+
 
     def cars_waiting_for_gate(self):
         return sum(
@@ -438,16 +592,39 @@ class ParkingLotModel(Model):
         )
 
     def maybe_arrive(self):
+        # processo de chegada discreto (Bernoulli por tick)
         if self.random.random() >= self.arrival_prob:
             return
 
-        if self.cell_has_driver(self.entry_pos):
+        # houve uma tentativa de chegada neste tick
+        self.total_arrivals += 1
+
+        # comprimento atual da fila (condutores com waiting_for_gate == True)
+        current_queue_len = self.cars_waiting_for_gate()
+
+        # --- NOT ENTERING: fila demasiado longa, condutor nem entra ---
+        if current_queue_len >= self.max_queue_length:
+            self.total_turned_away += 1
+            self.total_not_entered_long_queue += 1
             return
 
+        
+
+        # caso contrário, o carro entra mesmo no sistema
         drv = Driver(self.next_id(), self)
+        drv.arrival_step = self.current_step
         self.scheduler.add(drv)
 
+
     def step(self):
+        # avançar o relógio do modelo
+        self.current_step += 1
+
+        # tentar gerar nova chegada
         self.maybe_arrive()
+
+        # atualizar todos os agentes
         self.scheduler.step()
+
+        # recolher dados
         self.datacollector.collect(self)
