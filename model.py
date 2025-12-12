@@ -119,45 +119,43 @@ class Driver(Agent):
 
         # ---------------- WAITING_AT_GATE ----------------
         if self.state == "WAITING_AT_GATE":
-            
             x, y = self.pos
             gx, gy = self.model.entry_gate_2.pos
 
-            # car at the gate cell
+            # car at the gate cell (front of the line): never balks
             if (x, y) == (gx, gy):
                 if self.model.free_unreserved_capacity() > 0:
-                    # ficou espaço -> entra imediatamente
                     self._stop_queueing(entered=True)
                     self.target_space_id = self.model.get_free_unreserved_space_id()
                     self._set_belt_lane_from_target()
                     self.model.cars_inside += 1
                     self.waiting_for_gate = False
                     self.state = "DRIVING_TO_SPOT"
-                    return
-
                 else:
-                    # parque continua cheio -> continua a esperar
                     self.waiting_for_gate = True
-                    return
+                return
 
-            # carros atrás do portão tentam aproximar-se (andar para a direita)
+            # non-front cars: can balk probabilistically after threshold
+            if self.queue_entry_step is not None:
+                waited = self.model.current_step - self.queue_entry_step
+                if waited >= self.model.max_wait_time:
+                    if self.random.random() < self.model.p_balk_per_step_after_wait:
+                        self._balk_and_start_leaving()
+                        return
+
+            # try to move right toward the gate
             nx, ny = x + 1, y
             old_pos = self.pos
             self.try_move_to((nx, ny))
 
-            # se não se mexeu e o parque está cheio, está (ou permanece) em fila para o portão
             if self.pos == old_pos and self.model.free_unreserved_capacity() == 0:
                 self.waiting_for_gate = True
                 if self.queue_entry_step is None:
                     self._start_queueing()
-                # verificar tempo de espera para reneging
-                if self.queue_entry_step is not None:
-                    waited = self.model.current_step - self.queue_entry_step
-                    if waited >= self.model.max_wait_time:
-                        # after threshold: each step has a chance to balk
-                        if self.random.random() < self.model.p_balk_per_step_after_wait:
-                            self._balk_and_start_leaving()
-                            return
+            else:
+                self.waiting_for_gate = False
+
+            return
             
                 
 
