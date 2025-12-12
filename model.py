@@ -7,7 +7,25 @@ import math, random
 
 
 def parking_duration_steps(rng=random):
-    return rng.randint(500, 600)
+    """
+    Mixture model for parking durations (in steps).
+    - short stays:  –15% of drivers
+    - normal stays: –60%
+    - long stays:  –25%
+    """
+    u = rng.random()
+
+    # Short stay (e.g., quick errand)
+    if u < 0.15:
+        return rng.randint(80, 180)
+
+    # Normal stay
+    if u < 0.75:
+        return rng.randint(180, 600)
+
+    # Long stay
+    return rng.randint(600, 1200)
+
 
 
 class ParkingSpace(Agent):
@@ -120,15 +138,7 @@ class Driver(Agent):
                 else:
                     # parque continua cheio -> continua a esperar
                     self.waiting_for_gate = True
-
-                    if (
-                        self.queue_entry_step is not None and
-                        self.model.current_step - self.queue_entry_step >= self.model.max_wait_time
-                    ):
-                        self._balk_and_start_leaving()
-
                     return
-                return
 
             # carros atrás do portão tentam aproximar-se (andar para a direita)
             nx, ny = x + 1, y
@@ -141,11 +151,13 @@ class Driver(Agent):
                 if self.queue_entry_step is None:
                     self._start_queueing()
                 # verificar tempo de espera para reneging
-                if (
-                    self.queue_entry_step is not None and
-                    self.model.current_step - self.queue_entry_step >= self.model.max_wait_time
-                ):
-                    self._balk_and_start_leaving()
+                if self.queue_entry_step is not None:
+                    waited = self.model.current_step - self.queue_entry_step
+                    if waited >= self.model.max_wait_time:
+                        # after threshold: each step has a chance to balk
+                        if self.random.random() < self.model.p_balk_per_step_after_wait:
+                            self._balk_and_start_leaving()
+                            return
             
                 
 
@@ -414,9 +426,12 @@ class ParkingLotModel(Model):
         width,
         height,
         n_spaces,
-        arrival_prob,
+        arrival_prob=0.7,
         max_queue_length=10,
-        max_wait_time=50,
+        max_wait_time=50,   
+        day_length_steps=2000,
+        p_not_enter_long_queue=0.70,
+        p_balk_per_step_after_wait=0.05,
         seed=None,
     ):
         super().__init__(seed=seed)
@@ -424,6 +439,11 @@ class ParkingLotModel(Model):
         self.scheduler = RandomActivation(self)
 
         self.arrival_prob = arrival_prob
+        self.day_length_steps = day_length_steps
+        self.p_not_enter_long_queue = p_not_enter_long_queue
+        self.p_balk_per_step_after_wait = p_balk_per_step_after_wait
+
+
 
         # --- parâmetros de comportamento na fila ---
         self.max_queue_length = max_queue_length      # L: comprimento máximo da fila aceitável
@@ -450,6 +470,7 @@ class ParkingLotModel(Model):
 
         self.cars_inside = 0
         self.parked_count = 0
+
 
         ##positions
 
@@ -545,6 +566,9 @@ class ParkingLotModel(Model):
                     m.total_queue_time / m.total_queued_drivers
                     if m.total_queued_drivers > 0 else 0
                 ),
+                #Helper
+                "ArrivalProb": lambda m: m.arrival_prob_at_step(m.current_step),
+
             }
         )
 
@@ -555,6 +579,41 @@ class ParkingLotModel(Model):
             for a in self.scheduler.agents
             if isinstance(a, Driver) and getattr(a, "waiting_for_gate", False)
         )
+    
+    def arrival_prob_at_step(self, t: int) -> float:
+        """
+        Time-varying arrival probability (per step), repeating every 'day_length_steps'.
+        'arrival_prob' acts as a scaling factor.
+        """
+        tau = t % self.day_length_steps
+        frac = tau / self.day_length_steps
+
+        # base profile (0..1 range), then scaled by self.arrival_prob
+        if frac < 0.15:
+            base = 0.10   # very early low
+        elif frac < 0.25:
+            base = 0.20   # early low
+        elif frac < 0.40:
+            base = 0.50   # ramping up
+        elif frac < 0.55:
+            base = 0.70   # peak
+        elif frac < 0.70:
+            base = 0.40   # 
+        elif frac < 0.85:
+            base = 0.20   # ramping down
+        else:
+            base = 0.10   # late low
+
+        p = self.arrival_prob * base
+
+        # clamp to [0, 1]
+        if p < 0.0:
+            return 0.0
+        if p > 1.0:
+            return 1.0
+        return p
+
+
 
     def is_parking_cell(self, pos):
         return any(s.pos == pos for s in self.parking_spaces)
@@ -592,9 +651,11 @@ class ParkingLotModel(Model):
         )
 
     def maybe_arrive(self):
-        # processo de chegada discreto (Bernoulli por tick)
-        if self.random.random() >= self.arrival_prob:
+        p = self.arrival_prob_at_step(self.current_step)
+        if self.random.random() >= p:
             return
+
+
 
         # houve uma tentativa de chegada neste tick
         self.total_arrivals += 1
@@ -604,9 +665,13 @@ class ParkingLotModel(Model):
 
         # --- NOT ENTERING: fila demasiado longa, condutor nem entra ---
         if current_queue_len >= self.max_queue_length:
-            self.total_turned_away += 1
-            self.total_not_entered_long_queue += 1
-            return
+    # Probabilistic not-entering once queue is too long
+            print(self.p_not_enter_long_queue)
+            print(self.cars_waiting_for_gate() * 0.01)
+            if self.random.random() < self.p_not_enter_long_queue + self.cars_waiting_for_gate() * 0.01:
+                self.total_turned_away += 1
+                self.total_not_entered_long_queue += 1
+                return
 
         
 

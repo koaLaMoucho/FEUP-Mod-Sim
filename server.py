@@ -65,6 +65,11 @@ class KPIPanel(TextElement):
             turn_away_rate = model.total_turned_away / model.total_arrivals
         else:
             turn_away_rate = 0.0
+        
+        if model.total_balked > 0:
+            balk_rate = model.total_balked / model.total_arrivals
+        else:
+            balk_rate = 0.0
 
         if model.total_queued_drivers > 0:
             avg_queue_time = model.total_queue_time / model.total_queued_drivers
@@ -79,6 +84,7 @@ class KPIPanel(TextElement):
             f"  - Not entered (long queue): {model.total_not_entered_long_queue}",
             f"  - Balked (left queue): {model.total_balked}",
             f"Turn-Away Rate: {turn_away_rate:.3f}",
+            f"Balk Rate: {balk_rate:.3f}",
             "",
             f"Total Queue Time: {model.total_queue_time}",
             f"Queued Drivers (that entered): {model.total_queued_drivers}",
@@ -88,6 +94,8 @@ class KPIPanel(TextElement):
             f"Max Wait Time (param): {model.max_wait_time}",
             "",
             f"Total Revenue: {getattr(model, 'total_revenue', 0.0):.2f}",
+            #arrival prob
+            f"Arrival Probability (param): {model.arrival_prob * model.arrival_prob_at_step(model.current_step):.3f}"
         ]
         return "\n".join(lines)
 
@@ -127,8 +135,7 @@ def make_server(port=8521):
         {
             "width": width,
             "height": height,
-            "n_spaces": 4,
-            "arrival_prob": 0.4,
+            "n_spaces": 16
         },
     )
     server.port = port
