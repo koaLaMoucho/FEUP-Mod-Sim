@@ -95,6 +95,16 @@ class KPIPanel(TextElement):
             1 for s in getattr(model, "parking_spaces", []) if getattr(s, "is_reserved", False) and not s.occupied and not getattr(s, "held", False)
         )
 
+
+        current_price_display = f"€{model.base_price:.2f}"
+        
+        if model.parking_strategy == "Dynamic Pricing":
+            current_price_display = f"€{getattr(model, 'current_price', 0):.2f} (Dynamic)"
+        elif model.parking_strategy == "Reservations":
+             current_price_display = f"€{model.base_price:.2f} (Standard) / €15.00 (VIP)"
+        
+        revenue = getattr(model, "total_revenue", 0.0)
+
         lines = [
             f"Step: {model.current_step}",
             "",
@@ -120,6 +130,13 @@ class KPIPanel(TextElement):
             f"Reservations Fulfilled: {res_fulfilled}",
             f"Reservations Released (no-show released): {res_released}",
             f"Reserved idle spaces: {reserved_idle}",
+            "--- FINANCIALS ---",
+            f"Dynamic Pricing: {'ON' if model.parking_strategy == 'Dynamic Pricing' else 'OFF'}",
+            f"Current Price: ${getattr(model, 'current_price', 0):.2f}",
+            f"Total Revenue: ${getattr(model, 'total_revenue', 0.0):.2f}",
+            f"Lost Customers (Price): {getattr(model, 'total_price_turnaways', 0)}",
+            
+
         ]
         return "\n".join(lines)
 
@@ -170,10 +187,11 @@ def make_server(port=8521):
             "width": width,
             "height": height,
             "n_spaces": 16,
-            "reservation_mode": "reservations",        # "none" or "reservations"
+            "parking_strategy": "Dynamic Pricing",  # "Standard", "Dynamic Pricing", "Reservations"
             "reservation_percent": 0.20,               # fraction of spots reserved (0..1)
             "reservation_hold_time": 50,               # steps to hold after no-show
             "reservation_no_show_prob": 0.1,           # probability a reserved driver no-shows
+            
         },
     )
     server.port = port

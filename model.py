@@ -329,7 +329,7 @@ class Driver(Agent):
             return
 
         # ---- decide lane for this bay (middle lane of its belt) ----
-        lane_y = self.belt_lane_y if self.belt_lane_y is not None else self.model.roa
+        lane_y = self.belt_lane_y if self.belt_lane_y is not None else self.model.road_y
 
         start_x = self.model.parking_start_x
 
@@ -376,6 +376,11 @@ class Driver(Agent):
             self.current_space_id = space.unique_id
             self.state = "PARKED"
             self.model.parked_count += 1
+            
+            # --- NEW: Collect Revenue ---
+            # Use getattr to be safe if you didn't set agreed_price on reservations
+            price_to_pay = getattr(self, "agreed_price", self.model.base_price)
+            self.model.total_revenue += price_to_pay
     
     
     
@@ -470,10 +475,10 @@ class ParkingLotModel(Model):
         p_not_enter_long_queue=0.70,
         p_balk_per_step_after_wait=0.05,
         seed=None,
-        reservation_mode="none",         # "none" or "reservations"
         reservation_percent=0.0,        # fraction of spots to reserve (0..1)
         reservation_hold_time=50,       # steps to hold a spot after a no-show
         reservation_no_show_prob=0.1,   # prob that a reservation is a no-show
+        parking_strategy="Standard",
     ):
         super().__init__(seed=seed)
         self.grid = MultiGrid(width, height, torus=False)
@@ -484,11 +489,27 @@ class ParkingLotModel(Model):
         self.p_not_enter_long_queue = p_not_enter_long_queue
         self.p_balk_per_step_after_wait = p_balk_per_step_after_wait
 
-        self.reservation_mode = reservation_mode
         self.reservation_percent = reservation_percent
         self.reservation_hold_time = reservation_hold_time
         self.reservation_no_show_prob = reservation_no_show_prob
 
+        self.parking_strategy = parking_strategy
+        self.base_price = 10.0  # Default base price
+        
+        self.enable_dynamic_pricing = False
+        self.reservation_mode = "none"
+
+        if self.parking_strategy == "Dynamic Pricing":
+            self.enable_dynamic_pricing = True
+            
+        elif self.parking_strategy == "Reservations":
+            self.reservation_mode = "reservations"
+
+        #-- dynamic pricing ---
+        self.base_price = 10.0
+        self.current_price = self.base_price
+        self.total_revenue = 0.0
+        self.total_price_turnaways = 0
 
 
         # --- parâmetros de comportamento na fila ---
@@ -653,6 +674,29 @@ class ParkingLotModel(Model):
             }
         )
 
+    def update_dynamic_price(self):
+        """
+        Adjust price based on occupancy rate.
+        < 50% occupied: Discount
+        50% - 80% occupied: Base Price
+        > 80% occupied: Surge Price
+        """
+        if not self.enable_dynamic_pricing:
+            self.current_price = self.base_price
+            return
+
+        total_spots = len(self.parking_spaces)
+        occupied = sum(1 for s in self.parking_spaces if s.occupied)
+        occupancy_rate = occupied / total_spots if total_spots > 0 else 0
+
+        if occupancy_rate < 0.50:
+            self.current_price = self.base_price * 0.5  # 50% off
+        elif occupancy_rate > 0.80:
+            self.current_price = self.base_price * 2.0  # Surge pricing
+        else:
+            self.current_price = self.base_price
+
+    
 
     def cars_waiting_for_gate(self):
         return sum(
@@ -744,22 +788,26 @@ class ParkingLotModel(Model):
         if self.reservation_mode != "reservations":
             return
 
-        # handle scheduled reservation events at current_step
         for r in self.reservations:
             if r["handled"]:
                 continue
             if r["time"] == self.current_step:
                 s = self.space_by_id[r["space_id"]]
-                # decide show or no-show
                 if self.random.random() < (1 - self.reservation_no_show_prob):
-                    # create reserved driver tied to this reservation
+                    
+                    # Create the VIP Driver
                     drv = Driver(self.next_id(), self, reserved=True, reservation=r)
                     drv.arrival_step = self.current_step
-                    # target_space_id set in Driver __init__ via reservation
+                    
+                    # --- NEW: Apply Premium Pricing ---
+                    # Base (10) + Premium (5) = 15
+                    drv.agreed_price = self.base_price + 5.0 
+                    # ----------------------------------
+                    
                     self.scheduler.add(drv)
                     r["handled"] = True
                 else:
-                    # no-show: hold the spot for hold_time steps, then release it
+                    # (No-show logic remains the same)
                     s.held = True
                     s.held_until = self.current_step + self.reservation_hold_time
                     r["handled"] = True
@@ -780,6 +828,17 @@ class ParkingLotModel(Model):
         # houve uma tentativa de chegada neste tick
         self.total_arrivals += 1
 
+        # Generate a random Willingness To Pay (WTP) for this potential driver
+        driver_wtp = self.random.uniform(5.0, 25.0)
+
+        # Update the sign price before they look at it
+        self.update_dynamic_price()
+
+        if self.current_price > driver_wtp:
+            self.total_turned_away += 1
+            self.total_price_turnaways += 1
+            return  # Driver leaves immediately due to price
+
         # comprimento atual da fila (condutores com waiting_for_gate == True)
         current_queue_len = self.cars_waiting_for_gate()
 
@@ -794,6 +853,7 @@ class ParkingLotModel(Model):
         # caso contrário, o carro entra mesmo no sistema (walk-in)
         drv = Driver(self.next_id(), self)
         drv.arrival_step = self.current_step
+        drv.agreed_price = self.current_price
         self.scheduler.add(drv)
 
 
