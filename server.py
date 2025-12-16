@@ -5,6 +5,7 @@ from mesa.visualization.ModularVisualization import ModularServer
 from model import ParkingLotModel, ParkingSpace, Driver, Gate
 
 
+
 def agent_portrayal(agent):
     if isinstance(agent, Gate):
         color = "black" if agent.kind == "IN" else "gray"
@@ -18,9 +19,16 @@ def agent_portrayal(agent):
         }
 
     if isinstance(agent, ParkingSpace):
+        # safe checks for reservation attributes
+        is_reserved = getattr(agent, "is_reserved", False)
+        held = getattr(agent, "held", False)
         color = "#cccccc"
         if agent.occupied:
-            color = "#ff5555"
+            color = "#ff5555"  # occupied
+        elif held:
+            color = "#ffcc66"  # reserved but held (no-show hold)
+        elif is_reserved:
+            color = "#cceeff"  # reserved free spot
         return {
             "Shape": "rect",
             "w": 0.9,
@@ -31,28 +39,31 @@ def agent_portrayal(agent):
         }
 
     if isinstance(agent, Driver):
-        # same colour for whole life, defined only in Driver.__init__
+        # 1. Get the base color
         color = agent.color
+        
+        # 2. Define the base portrayal dictionary
+        portrayal = {
+            "Filled": "true",
+            "Color": color,
+            "Layer": 3,
+        }
 
+        # 3. If VIP, add the "V"
+        if getattr(agent, "reserved_customer", False):
+            portrayal["text"] = "V"
+            portrayal["text_color"] = "white" # White text stands out on dark colors
+
+        # 4. Handle Shape based on state (Exiting vs Normal)
         if agent.state == "EXITING":
-            # smaller square so it doesn’t paint the whole cell
-            return {
-                "Shape": "rect",
-                "w": 0.4,
-                "h": 0.4,
-                "Filled": "true",
-                "Color": color,
-                "Layer": 3,
-            }
+            portrayal["Shape"] = "rect"
+            portrayal["w"] = 0.4
+            portrayal["h"] = 0.4
         else:
-            # normal circle
-            return {
-                "Shape": "circle",
-                "r": 0.8,
-                "Filled": "true",
-                "Color": color,
-                "Layer": 3,
-            }
+            portrayal["Shape"] = "circle"
+            portrayal["r"] = 0.8
+            
+        return portrayal
 
 
 class KPIPanel(TextElement):
@@ -76,6 +87,14 @@ class KPIPanel(TextElement):
         else:
             avg_queue_time = 0.0
 
+        # reservation KPIs (use getattr for backward compatibility)
+        total_res = getattr(model, "total_reservations", 0)
+        res_fulfilled = getattr(model, "total_reservations_fulfilled", 0)
+        res_released = getattr(model, "total_reservations_released", 0)
+        reserved_idle = sum(
+            1 for s in getattr(model, "parking_spaces", []) if getattr(s, "is_reserved", False) and not s.occupied and not getattr(s, "held", False)
+        )
+
         lines = [
             f"Step: {model.current_step}",
             "",
@@ -95,7 +114,12 @@ class KPIPanel(TextElement):
             "",
             f"Total Revenue: {getattr(model, 'total_revenue', 0.0):.2f}",
             #arrival prob
-            f"Arrival Probability (param): {model.arrival_prob * model.arrival_prob_at_step(model.current_step):.3f}"
+            f"Arrival Probability (param): {model.arrival_prob * model.arrival_prob_at_step(model.current_step):.3f}",
+            f"Reservation mode: {getattr(model, 'reservation_mode', 'none')}",
+            f"Total Reservations (scheduled): {total_res}",
+            f"Reservations Fulfilled: {res_fulfilled}",
+            f"Reservations Released (no-show released): {res_released}",
+            f"Reserved idle spaces: {reserved_idle}",
         ]
         return "\n".join(lines)
 
@@ -126,16 +150,30 @@ def make_server(port=8521):
         data_collector_name="datacollector",
     )
 
+    # Reservation chart
+    reservation_chart = ChartModule(
+        [
+            {"Label": "ReservationsFulfilled", "Color": "#00cc00"},
+            {"Label": "ReservationsReleased", "Color": "#cc6600"},
+            {"Label": "ReservedIdleSpaces", "Color": "#0066cc"},
+        ],
+        data_collector_name="datacollector",
+    )
+
     kpi_panel = KPIPanel()
 
     server = ModularServer(
         ParkingLotModel,
-        [grid, main_chart, queue_chart, kpi_panel],
+        [grid, main_chart, queue_chart, reservation_chart, kpi_panel],
         "Minimal Private Parking Lot",
         {
             "width": width,
             "height": height,
-            "n_spaces": 16
+            "n_spaces": 16,
+            "reservation_mode": "reservations",        # "none" or "reservations"
+            "reservation_percent": 0.20,               # fraction of spots reserved (0..1)
+            "reservation_hold_time": 50,               # steps to hold after no-show
+            "reservation_no_show_prob": 0.1,           # probability a reserved driver no-shows
         },
     )
     server.port = port
