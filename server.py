@@ -201,13 +201,15 @@ def make_server(port=8521):
         {
             "width": width,
             "height": height,
-            "n_spaces": 16,
+            "n_spaces": 10,
             "parking_strategy": "Dynamic Pricing", 
             "reservation_percent": 0.20,             
-            "reservation_hold_time": 50,              
-            "reservation_no_show_prob": 0.1,          
+            "reservation_hold_time": 30,              
+            "reservation_no_show_prob": 0.05,
+            "day_length_steps": 1000,
+            "arrival_prob": 0.7,        
         },
     )
-    server.max_steps = 50
+    server.max_steps = 1000
     server.port = port
     return server

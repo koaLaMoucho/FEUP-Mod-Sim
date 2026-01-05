@@ -9,22 +9,23 @@ import math, random
 def parking_duration_steps(rng=random):
     """
     Mixture model for parking durations (in steps).
-    - short stays:  –15% of drivers
-    - normal stays: –60%
-    - long stays:  –25%
+    - short stays:  15% of drivers
+    - normal stays: 60%
+    - long stays:  25%
+    1 step = 1 minute
     """
     u = rng.random()
 
     # Short stay (e.g., quick errand)
     if u < 0.15:
-        return rng.randint(80, 180)
+        return rng.randint(15, 45)
 
     # Normal stay
     if u < 0.75:
-        return rng.randint(180, 600)
+        return rng.randint(60, 150)
 
     # Long stay
-    return rng.randint(600, 1200)
+    return rng.randint(240, 540)
 
 
 
@@ -470,13 +471,13 @@ class ParkingLotModel(Model):
         n_spaces,
         arrival_prob=0.7,
         max_queue_length=10,
-        max_wait_time=50,   
-        day_length_steps=500,
-        p_not_enter_long_queue=0.70,
-        p_balk_per_step_after_wait=0.05,
+        max_wait_time=15,   
+        day_length_steps=1000,
+        p_not_enter_long_queue=0.80,
+        p_balk_per_step_after_wait=0.10,
         seed=None,
         reservation_percent=0.0,        # fraction of spots to reserve (0..1)
-        reservation_hold_time=50,       # steps to hold a spot after a no-show
+        reservation_hold_time=30,       # steps to hold a spot after a no-show
         reservation_no_show_prob=0.1,   # prob that a reservation is a no-show
         parking_strategy="Standard",
     ):
@@ -872,3 +873,22 @@ class ParkingLotModel(Model):
 
         # recolher dados
         self.datacollector.collect(self)
+
+
+        if self.current_step == self.day_length_steps:
+            self.save_data()
+            print(f"Day ended. Data saved to 'simulation_results.csv'")
+
+    def save_data(self):
+        """
+        Exports the collected data to a CSV file for analysis in Excel/Pandas.
+        """
+        # Get the dataframe from the datacollector
+        df = self.datacollector.get_model_vars_dataframe()
+        
+        # Save to CSV
+        filename = "simulation_results.csv"
+        df.to_csv(filename)
+        
+
+
