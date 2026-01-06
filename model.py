@@ -103,42 +103,41 @@ class Driver(Agent):
             gx, gy = self.model.entry_gate_2.pos
             x, y = self.pos
 
-            # At gate_2
+            # At gate_2: check if we can enter
             if (x, y) == (gx, gy):
+                can_enter = False
                 if self.reserved_customer:
                     if self.model.reserved_space_available_for(self.target_space_id):
+                        can_enter = True
+                else:
+                    if self.model.free_unreserved_capacity() > 0:
+                        can_enter = True
+                
+                if can_enter:
+                    if self.reserved_customer:
                         self._set_belt_lane_from_target()
                         self.model.cars_inside += 1
                         self.state = "DRIVING_TO_SPOT"
                     else:
-                        self.waiting_for_gate = True
-                        self._start_queueing()
-                        self.state = "WAITING_AT_GATE"
-            
-            else:
-                # VIPs must skip this and keep moving to the gate.
-                if not self.reserved_customer and self.model.free_unreserved_capacity() > 0:
-                    # choose spot and enter park in this tick
-                    self.target_space_id = self.model.get_free_unreserved_space_id()
-                    self._set_belt_lane_from_target()
-                    self.model.cars_inside += 1
-                    self.state = "DRIVING_TO_SPOT"
-                    return # Important: exit step so they don't move again
-                
-                # If unreserved and full, OR if reserved (VIP), keep moving/queueing
-                if not self.reserved_customer and self.model.free_unreserved_capacity() == 0:
+                        self.target_space_id = self.model.get_free_unreserved_space_id()
+                        self._set_belt_lane_from_target()
+                        self.model.cars_inside += 1
+                        self.state = "DRIVING_TO_SPOT"
+                    return
+                else:
+                    # Cannot enter: wait at gate
                     self.waiting_for_gate = True
                     self._start_queueing()
                     self.state = "WAITING_AT_GATE"
                     return
-            
 
-            # Move right toward gate_2 if free
+            # Not at gate_2 yet: always move right toward it (no bypassing)
             nx, ny = x + 1, y
             old_pos = self.pos
             self.try_move_to((nx, ny))
-            #Se nao conseguir andar pra frente é porque tá a esperar na fila
-            if self.pos == old_pos and self.model.free_unreserved_capacity() == 0:
+            
+            # If couldn't move, start queuing
+            if self.pos == old_pos:
                 self.waiting_for_gate = True
                 self._start_queueing()
                 self.state = "WAITING_AT_GATE"
@@ -151,30 +150,36 @@ class Driver(Agent):
             x, y = self.pos
             gx, gy = self.model.entry_gate_2.pos
 
-            # car at the gate cell (front of the line): never balks
+            # Car at the gate cell (front of the line): check entry
             if (x, y) == (gx, gy):
+                can_enter = False
                 if self.reserved_customer:
                     if self.model.reserved_space_available_for(self.target_space_id):
-                        self._stop_queueing(entered=True)
+                        can_enter = True
+                else:
+                    if self.model.free_unreserved_capacity() > 0:
+                        can_enter = True
+                
+                if can_enter:
+                    self._stop_queueing(entered=True)
+                    if self.reserved_customer:
                         self._set_belt_lane_from_target()
                         self.model.cars_inside += 1
                         self.waiting_for_gate = False
                         self.state = "DRIVING_TO_SPOT"
                     else:
-                        self.waiting_for_gate = True
-                else:
-                    if self.model.free_unreserved_capacity() > 0:
-                        self._stop_queueing(entered=True)
                         self.target_space_id = self.model.get_free_unreserved_space_id()
                         self._set_belt_lane_from_target()
                         self.model.cars_inside += 1
                         self.waiting_for_gate = False
                         self.state = "DRIVING_TO_SPOT"
-                    else:
-                        self.waiting_for_gate = True
-                return
+                    return
+                else:
+                    # Still waiting
+                    self.waiting_for_gate = True
+                    return
 
-            # non-front cars: can balk probabilistically after threshold
+            # Non-front cars: can balk probabilistically after threshold
             if self.queue_entry_step is not None:
                 waited = self.model.current_step - self.queue_entry_step
                 if waited >= self.model.max_wait_time:
@@ -182,12 +187,12 @@ class Driver(Agent):
                         self._balk_and_start_leaving()
                         return
 
-            # try to move right toward the gate
+            # Try to move right toward the gate
             nx, ny = x + 1, y
             old_pos = self.pos
             self.try_move_to((nx, ny))
 
-            if self.pos == old_pos and self.model.free_unreserved_capacity() == 0:
+            if self.pos == old_pos:
                 self.waiting_for_gate = True
                 if self.queue_entry_step is None:
                     self._start_queueing()
