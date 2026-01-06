@@ -378,11 +378,11 @@ class Driver(Agent):
             self.state = "PARKED"
             self.model.parked_count += 1
             
-            # --- NEW: Collect Revenue ---
-            # Use getattr to be safe if you didn't set agreed_price on reservations
-            price_to_pay = getattr(self, "agreed_price", self.model.base_price)
+            # --- Collect Revenue ---
+            price_to_pay = self.parking_duration * getattr(self, "agreed_rate", self.model.base_per_minute)
+            if getattr(self, "is_reserved", False):
+                price_to_pay += self.model.reservation_fee
             self.model.total_revenue += price_to_pay
-    
     
     
     def _set_belt_lane_from_target(self):
@@ -495,7 +495,8 @@ class ParkingLotModel(Model):
         self.reservation_no_show_prob = reservation_no_show_prob
 
         self.parking_strategy = parking_strategy
-        self.base_price = 10.0  # Default base price
+        self.base_per_minute = 0.022  # euros per minute
+        self.reservation_fee = 5.0  # euros
         
         self.enable_dynamic_pricing = False
         self.reservation_mode = "none"
@@ -507,8 +508,7 @@ class ParkingLotModel(Model):
             self.reservation_mode = "reservations"
 
         #-- dynamic pricing ---
-        self.base_price = 10.0
-        self.current_price = self.base_price
+        self.current_per_minute_rate = self.base_per_minute
         self.total_revenue = 0.0
         self.total_price_turnaways = 0
 
@@ -683,7 +683,7 @@ class ParkingLotModel(Model):
         > 80% occupied: Surge Price
         """
         if not self.enable_dynamic_pricing:
-            self.current_price = self.base_price
+            self.current_per_minute_rate = self.base_per_minute
             return
 
         total_spots = len(self.parking_spaces)
@@ -691,11 +691,11 @@ class ParkingLotModel(Model):
         occupancy_rate = occupied / total_spots if total_spots > 0 else 0
 
         if occupancy_rate < 0.50:
-            self.current_price = self.base_price * 0.5  # 50% off
+            self.current_per_minute_rate = self.base_per_minute * 0.5  # 50% off
         elif occupancy_rate > 0.80:
-            self.current_price = self.base_price * 2.0  # Surge pricing
+            self.current_per_minute_rate = self.base_per_minute * 2.0  # Surge pricing
         else:
-            self.current_price = self.base_price
+            self.current_per_minute_rate = self.base_per_minute
 
     
 
@@ -800,10 +800,9 @@ class ParkingLotModel(Model):
                     drv = Driver(self.next_id(), self, reserved=True, reservation=r)
                     drv.arrival_step = self.current_step
                     
-                    # --- NEW: Apply Premium Pricing ---
-                    # Base (10) + Premium (5) = 15
-                    drv.agreed_price = self.base_price + 5.0 
-                    # ----------------------------------
+                    # Set agreed rate for reserved drivers
+                    drv.agreed_rate = self.current_per_minute_rate
+                    drv.is_reserved = True
                     
                     self.scheduler.add(drv)
                     r["handled"] = True
@@ -829,13 +828,13 @@ class ParkingLotModel(Model):
         # houve uma tentativa de chegada neste tick
         self.total_arrivals += 1
 
-        # Generate a random Willingness To Pay (WTP) for this potential driver
-        driver_wtp = self.random.uniform(5.0, 25.0)
+        # Generate a random Willingness To Pay (WTP) for this potential driver (per minute in euros)
+        driver_wtp = self.random.uniform(0.01, 0.05)
 
-        # Update the sign price before they look at it
+        # Update the sign rate before they look at it
         self.update_dynamic_price()
 
-        if self.current_price > driver_wtp:
+        if self.current_per_minute_rate > driver_wtp:
             self.total_turned_away += 1
             self.total_price_turnaways += 1
             return  # Driver leaves immediately due to price
@@ -854,7 +853,8 @@ class ParkingLotModel(Model):
         # caso contrário, o carro entra mesmo no sistema (walk-in)
         drv = Driver(self.next_id(), self)
         drv.arrival_step = self.current_step
-        drv.agreed_price = self.current_price
+        drv.agreed_rate = self.current_per_minute_rate
+        drv.is_reserved = False
         self.scheduler.add(drv)
 
 

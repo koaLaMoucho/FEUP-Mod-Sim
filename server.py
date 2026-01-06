@@ -144,7 +144,7 @@ class KPIPanel(TextElement):
             <h4 style="margin-bottom:5px; color: #444;">💰 Financials</h4>
             <table style="width:100%">
                 <tr><td>Strategy</td><td style="text-align:right">{model.parking_strategy}</td></tr>
-                <tr><td>Price</td><td style="text-align:right">€{getattr(model, 'current_price', model.base_price):.2f}</td></tr>
+                <tr><td>Rate (€/min)</td><td style="text-align:right">€{getattr(model, 'current_per_minute_rate', model.base_per_minute):.3f}</td></tr>
                 <tr><td>Total Revenue</td><td style="text-align:right">€{getattr(model, 'total_revenue', 0.0):.2f}</td></tr>
                 <tr><td>Lost (Price)</td><td style="text-align:right">{getattr(model, 'total_price_turnaways', 0)}</td></tr>
             </table>
