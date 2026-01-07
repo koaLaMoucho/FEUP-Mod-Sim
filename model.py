@@ -5,7 +5,6 @@ from mesa.datacollection import DataCollector
 import math, random
 
 
-
 def parking_duration_steps(rng=random):
     """
     Mixture model for parking durations (in steps).
@@ -18,16 +17,14 @@ def parking_duration_steps(rng=random):
 
     # Short stay (e.g., quick errand)
     if u < 0.15:
-        return rng.randint(15, 45)
+        return rng.randint(15, 119)
 
     # Normal stay
-    if u < 0.75:
-        return rng.randint(60, 150)
+    if u < 0.65:
+        return rng.randint(120, 239)
 
     # Long stay
-    return rng.randint(240, 540)
-
-
+    return rng.randint(240, 700)
 
 class ParkingSpace(Agent):
     def __init__(self, unique_id, model, pos):
@@ -35,7 +32,7 @@ class ParkingSpace(Agent):
         self.pos = pos
         self.occupied = False
         self.occupant_id = None
-
+        
         self.is_reserved = False
         self.held = False
         self.held_until = None
@@ -49,7 +46,6 @@ class Gate(Agent):
         super().__init__(unique_id, model)
         self.pos = pos
         self.kind = kind
-
     def step(self):
         pass
 
@@ -60,9 +56,8 @@ class Driver(Agent):
         self.state = "ARRIVING"
         self.waiting_for_gate = False
         self.belt_lane_y = None
-
         self.color = "#%06x" % self.random.randrange(0, 0xFFFFFF)
-
+        
         self.target_space_id = None
         self.current_space_id = None
 
@@ -72,7 +67,9 @@ class Driver(Agent):
 
         if self.reserved_customer and self.reservation is not None:
             self.target_space_id = reservation['space_id']
-        
+            # As soon as this agent is created, we check the spot and boot anyone there.
+            if self.target_space_id is not None:
+                self.force_eviction_of_occupant(self.target_space_id)
 
         self.parking_duration = parking_duration or parking_duration_steps(rng=self.random)
         self.remaining_time = self.parking_duration
@@ -84,9 +81,7 @@ class Driver(Agent):
         # --- estado de abandono (balked) ---
         self.balked = False
 
-
     def step(self):
-
         if self.state == "BALKING":
             self._balking_move()
             return
@@ -103,12 +98,13 @@ class Driver(Agent):
             gx, gy = self.model.entry_gate_2.pos
             x, y = self.pos
 
-            # At gate_2: check if we can enter
             if (x, y) == (gx, gy):
                 can_enter = False
                 if self.reserved_customer:
-                    if self.model.reserved_space_available_for(self.target_space_id):
-                        can_enter = True
+                    # VIPs always try to enter. If spot is occupied, we will have booted the occupant.
+                    # However, physically it might still be full. The VIP waits or enters.
+                    # For simplicity, VIP enters if the reservation is valid.
+                    can_enter = True 
                 else:
                     if self.model.free_unreserved_capacity() > 0:
                         can_enter = True
@@ -131,7 +127,7 @@ class Driver(Agent):
                     self.state = "WAITING_AT_GATE"
                     return
 
-            # Not at gate_2 yet: always move right toward it (no bypassing)
+            # Move toward gate
             nx, ny = x + 1, y
             old_pos = self.pos
             self.try_move_to((nx, ny))
@@ -154,8 +150,7 @@ class Driver(Agent):
             if (x, y) == (gx, gy):
                 can_enter = False
                 if self.reserved_customer:
-                    if self.model.reserved_space_available_for(self.target_space_id):
-                        can_enter = True
+                    can_enter = True
                 else:
                     if self.model.free_unreserved_capacity() > 0:
                         can_enter = True
@@ -175,12 +170,11 @@ class Driver(Agent):
                         self.state = "DRIVING_TO_SPOT"
                     return
                 else:
-                    # Still waiting
                     self.waiting_for_gate = True
                     return
 
-            # Non-front cars: can balk probabilistically after threshold
-            if self.queue_entry_step is not None:
+            # Balking logic
+            if not self.reserved_customer and self.queue_entry_step is not None:
                 waited = self.model.current_step - self.queue_entry_step
                 if waited >= self.model.max_wait_time:
                     if self.random.random() < self.model.p_balk_per_step_after_wait:
@@ -198,7 +192,6 @@ class Driver(Agent):
                     self._start_queueing()
             else:
                 self.waiting_for_gate = False
-
             return
         
         # ---------------- DRIVING_TO_SPOT ----------------
@@ -224,13 +217,12 @@ class Driver(Agent):
                 self.model.grid.remove_agent(self)
                 self.model.scheduler.remove(self)
 
+    # --- Queueing Helpers ---
     def _start_queueing(self):
-        """Marcar que o condutor entrou em fila no portão."""
         if self.queue_entry_step is None:
             self.queue_entry_step = self.model.current_step
 
     def _stop_queueing(self, entered: bool):
-        """Parar de contar fila; 'entered=True' só quando o carro entrou no parque."""
         if self.queue_entry_step is not None:
             q_time = self.model.current_step - self.queue_entry_step
             self.model.total_queue_time += q_time
@@ -238,62 +230,39 @@ class Driver(Agent):
                 self.model.total_queued_drivers += 1
             self.queue_entry_step = None
 
-
     def _balk_and_start_leaving(self):
         self.balked = True
-        # fechar a contagem de tempo de fila, mas sem contar como "queued driver que entrou"
         self._stop_queueing(entered=False)
-
         self.model.total_turned_away += 1
         self.model.total_balked += 1
-
         self.waiting_for_gate = False
         self.state = "BALKING"
         self._balked_moved_down = False
-
     
     def _balking_move(self):
-        """
-        Movimento visual para quem estava na fila e desistiu (BALKING):
-        1) primeiro passo: desce 1 em y
-        2) depois: anda para a esquerda até alinhar com entry_pos.x
-        3) quando chega ao x do entry, desaparece
-        """
         x, y = self.pos
         entry_x, entry_y = self.model.entry_pos
-
-        # primeiro passo após sair da fila: descer 1 em y
         if not getattr(self, "_balked_moved_down", False):
             new_y = y + 1
-            if new_y < self.model.grid.height:
-                new_pos = (x, new_y)
-            else:
-                new_pos = (x, y)
+            new_pos = (x, new_y) if new_y < self.model.grid.height else (x, y)
             self._balked_moved_down = True
         else:
-            # depois, mover para a esquerda até x == entry_x
             if x > entry_x:
                 new_x = x - 1
                 new_pos = (new_x, y)
             else:
-                # já chegou "à entrada mas em y+1": remove o agente
                 if self in self.model.scheduler.agents:
                     self.model.grid.remove_agent(self)
                     self.model.scheduler.remove(self)
                 return
-
-        # tentar mover (ignoramos colisões de forma simples; se bloquear, removemos)
         try:
             self.model.grid.move_agent(self, new_pos)
         except Exception:
-            # se der problema, simplesmente removemos para não estragar a simulação
             if self in self.model.scheduler.agents:
                 self.model.grid.remove_agent(self)
                 self.model.scheduler.remove(self)
 
-
-
-    # ---------- Collision + lane discipline ----------
+    # ---------- Collision + Lane Discipline ----------
     def try_move_to(self, new_pos):
         if self.model.is_parking_cell(new_pos):
             space = None
@@ -312,7 +281,7 @@ class Driver(Agent):
 
         self.model.grid.move_agent(self, new_pos)
 
-    # ---------- Movement to spot ----------
+    # ---------- Movement to Spot ----------
     def drive_to_spot(self):
         space = self.model.space_by_id[self.target_space_id]
         x, y = self.pos
@@ -327,55 +296,47 @@ class Driver(Agent):
                 self.state = "PARKED"
                 self.model.parked_count += 1
 
-                # if this driver fulfilled a reservation, record KPI
-                if self.reserved_customer and self.reservation is not None and not self.reservation.get("fulfilled", False):
-                    self.reservation["fulfilled"] = True
-                    self.model.total_reservations_fulfilled += 1
-
+                if self.reserved_customer and self.reservation is not None:
+                    if not self.reservation.get("fulfilled", False):
+                        self.reservation["fulfilled"] = True
+                        self.model.total_reservations_fulfilled += 1
             return
 
-        # ---- decide lane for this bay (middle lane of its belt) ----
         lane_y = self.belt_lane_y if self.belt_lane_y is not None else self.model.road_y
-
         start_x = self.model.parking_start_x
-
-        # ---- movement priority ----
         nx, ny = x, y
 
         if x <= start_x and y != lane_y:
-            # we are before the parking area: go vertically to the belt lane
             ny = y + 1 if y < lane_y else y - 1
             nx = x
-
         elif y == lane_y and x != tx:
-            # on the belt lane: move horizontally to align with the bay
             nx = x + 1 if x < tx else x - 1
             ny = y
 
+            # If next step is the spot, wait if it's not empty.
+            if nx == tx:
+                 if space.occupied and space.occupant_id != self.unique_id:
+                     return
+            
+            if nx == tx:
+                 if space.occupied and space.occupant_id != self.unique_id:
+                     # Wait here. Do not block the door.
+                     return
+
+
+            nx = x + 1 if x < tx else x - 1
+            ny = y
         elif x == tx and y != ty:
-            # aligned in x and on/near lane: move vertically into the bay row
             ny = y + 1 if y < ty else y - 1
             nx = x
-
         else:
-            # fallback: simple Manhattan toward target (rare edge cases)
-            if x < tx:
-                nx = x + 1
-                ny = y
-            elif x > tx:
-                nx = x - 1
-                ny = y
-            elif y < ty:
-                nx = x
-                ny = y + 1
-            elif y > ty:
-                nx = x
-                ny = y - 1
+            if x < tx: nx = x + 1
+            elif x > tx: nx = x - 1
+            elif y < ty: nx = x
+            elif y > ty: nx = x - 1 
 
-        prev = self.pos
         self.try_move_to((nx, ny))
 
-        # if after moving we are actually on our bay, park atomically
         if self.pos == space.pos and not space.occupied:
             space.occupied = True
             space.occupant_id = self.unique_id
@@ -383,18 +344,12 @@ class Driver(Agent):
             self.state = "PARKED"
             self.model.parked_count += 1
             
-            # --- Collect Revenue ---
             price_to_pay = self.parking_duration * getattr(self, "agreed_rate", self.model.base_per_minute)
             if getattr(self, "is_reserved", False):
                 price_to_pay += self.model.reservation_fee
             self.model.total_revenue += price_to_pay
     
-    
     def _set_belt_lane_from_target(self):
-        """
-        Decide which belt lane (middle row of the belt) this car belongs to,
-        based on the target parking space.
-        """
         lane_y = self.model.road_y
         if self.target_space_id is not None:
             sx, sy = self.model.space_by_id[self.target_space_id].pos
@@ -404,10 +359,8 @@ class Driver(Agent):
                     break
         self.belt_lane_y = lane_y
 
-
-    # ---------- Movement to exit ----------
+    # ---------- Movement to Exit ----------
     def drive_to_exit(self):
-        # identify the space we are leaving (for freeing)
         space = None
         if self.target_space_id is not None:
             space = self.model.space_by_id[self.target_space_id]
@@ -417,7 +370,6 @@ class Driver(Agent):
         ex, ey = self.model.exit_gate.pos
         road_y = self.model.road_y
 
-        # reached exit: leave the system
         if (x, y) == (ex, ey):
             self.state = "EXITED"
             self.model.cars_inside -= 1
@@ -425,47 +377,53 @@ class Driver(Agent):
             self.model.scheduler.remove(self)
             return
 
-        # ---- lane for this car's belt ----
         lane_y = self.belt_lane_y if self.belt_lane_y is not None else road_y
-
         parking_end_x = getattr(self.model, "parking_end_x", self.model.parking_start_x)
-
-        # ---- movement priority (reverse of entry) ----
         nx, ny = x, y
 
         if x <= parking_end_x and y != lane_y:
-            # still inside the parking columns: go vertically to the belt lane
             ny = y + 1 if y < lane_y else y - 1
             nx = x
-
         elif x <= parking_end_x and y == lane_y:
-            # on the belt lane inside parking area: move right out of the bays
             nx = x + 1
             ny = y
-
         elif x > parking_end_x and y != road_y:
-            # to the right of parking: drop to main road (no bays here)
             ny = y + 1 if y < road_y else y - 1
             nx = x
-
         else:
-            # on main road to the right of parking: go horizontally to exit
-            nx, ny = x, y
-            if x < ex:
-                nx = x + 1
-            elif x > ex:
-                nx = x - 1
+            if x < ex: nx = x + 1
+            elif x > ex: nx = x - 1
 
-        # move with collision + no-drive-through-bays logic
         self.try_move_to((nx, ny))
 
-        # after moving: if we just left the parking space cell, free it now
         if space is not None and prev == space.pos and self.pos != space.pos:
             space.occupied = False
             space.occupant_id = None
             self.target_space_id = None
 
-
+    def force_eviction_of_occupant(self, space_id):
+        """Helper to find whoever is in the space and tell them to leave immediately."""
+        space = self.model.space_by_id.get(space_id)
+        if not space or not space.occupied:
+            return
+            
+        # We need to find the specific driver agent in that cell
+        cell_contents = self.model.grid.get_cell_list_contents([space.pos])
+        for agent in cell_contents:
+            if isinstance(agent, Driver) and agent.unique_id != self.unique_id:
+                # Found the squatter.
+                if agent.state != "EXITING":
+                    agent.remaining_time = 0
+                    agent.state = "EXITING"
+                    # Instantly vacate the spot
+                    space.occupied = False
+                    space.occupant_id = None
+                    # Move the squatter to the road lane to start exiting (avoid blocking)
+                    road_y = self.model.road_y
+                    sx, sy = space.pos
+                    exit_pos = (sx, road_y)  # Move to road lane at the same x
+                    self.model.grid.move_agent(agent, exit_pos)
+                    # Note: They will continue exiting from there in their next steps.
 
 
 class ParkingLotModel(Model):
@@ -476,14 +434,14 @@ class ParkingLotModel(Model):
         n_spaces,
         arrival_prob=0.7,
         max_queue_length=10,
-        max_wait_time=15,   
+        max_wait_time=50,   
         day_length_steps=1000,
         p_not_enter_long_queue=0.80,
         p_balk_per_step_after_wait=0.10,
         seed=None,
-        reservation_percent=0.0,        # fraction of spots to reserve (0..1)
-        reservation_hold_time=30,       # steps to hold a spot after a no-show
-        reservation_no_show_prob=0.1,   # prob that a reservation is a no-show
+        reservation_percent=0.0,        
+        reservation_hold_time=0.05,       
+        reservation_no_show_prob=0.1,   
         parking_strategy="Standard",
     ):
         super().__init__(seed=seed)
@@ -494,69 +452,44 @@ class ParkingLotModel(Model):
         self.day_length_steps = day_length_steps
         self.p_not_enter_long_queue = p_not_enter_long_queue
         self.p_balk_per_step_after_wait = p_balk_per_step_after_wait
-
         self.reservation_percent = reservation_percent
         self.reservation_hold_time = reservation_hold_time
         self.reservation_no_show_prob = reservation_no_show_prob
-
         self.parking_strategy = parking_strategy
-        self.base_per_minute = 0.022  # euros per minute
-        self.reservation_fee = 5.0  # euros
+        
+        self.base_per_minute = 0.022
+        self.reservation_fee = 5.0
         
         self.enable_dynamic_pricing = False
         self.reservation_mode = "none"
 
         if self.parking_strategy == "Dynamic Pricing":
-            self.enable_dynamic_pricing = True
-            
+            self.enable_dynamic_pricing = True 
         elif self.parking_strategy == "Reservations":
             self.reservation_mode = "reservations"
 
-        #-- dynamic pricing ---
         self.current_per_minute_rate = self.base_per_minute
         self.total_revenue = 0.0
         self.total_price_turnaways = 0
 
-
-        # --- parâmetros de comportamento na fila ---
-        self.max_queue_length = max_queue_length      # L: comprimento máximo da fila aceitável
-        self.max_wait_time = max_wait_time            # T: tempo máximo em fila (steps)
-
-        # --- time and KPI counters ---
+        self.max_queue_length = max_queue_length
+        self.max_wait_time = max_wait_time
         self.current_step = 0
-
         self.total_arrivals = 0
-
-        # turned-away total (qualquer motivo)
         self.total_turned_away = 0
-
-        # 1) viu fila grande e nem entrou
         self.total_not_entered_long_queue = 0
-
-        # 2) já estava na fila e desistiu (balked)
         self.total_balked = 0
-
         self.total_queue_time = 0
         self.total_queued_drivers = 0
-
-        self.total_revenue = 0.0
-
         self.cars_inside = 0
         self.parked_count = 0
 
-
-        ##positions
-
+        # --- Grid & Gate Setup ---
         self.road_y = height // 2
-
         self.entry_pos = (0, self.road_y)
-
-        min_width = n_spaces + 7  # 1 (entry) + 1 (second_entry) + 2 + n_spaces + 2 + 1 (exit)
+        min_width = n_spaces + 7
         if width < min_width:
-            raise ValueError(
-                f"Grid width {width} too small for {n_spaces} spaces; need at least {min_width}"
-            )
-
+            raise ValueError(f"Grid width {width} too small.")
 
         second_entry_x = width - (n_spaces + 6)
         second_entry_pos = (second_entry_x, self.road_y)
@@ -568,47 +501,28 @@ class ParkingLotModel(Model):
         self.scheduler.add(self.entry_gate)
         self.scheduler.add(self.entry_gate_2)
 
-       
-
-        
-        
-
         self.parking_spaces = []
-
-        # same horizontal start for all belts
-        
-        self.parking_start_x = second_entry_x + 3  # gate2 + 2 empty + 1st parking column
+        self.parking_start_x = second_entry_x + 3
         start_x = self.parking_start_x
-
-        
         self.exit_pos = (self.parking_start_x + n_spaces + 2, self.road_y)
-        
         self.exit_gate = Gate(self.next_id(), self, self.exit_pos, "OUT")
-        
         self.grid.place_agent(self.exit_gate, self.exit_gate.pos)
-        
         self.scheduler.add(self.exit_gate)
         
-        # middle rows of each belt (one above, one middle, one below)
         belt_offsets = [-6, -3, 0, 3, 6]
         self.belt_mid_rows = []
         parking_rows = []
-
         for offset in belt_offsets:
             mid_y = self.road_y + offset
-            # keep only belts fully inside the grid
             if 0 <= mid_y - 1 < height and 0 <= mid_y + 1 < height:
                 self.belt_mid_rows.append(mid_y)
-                rows_for_belt = [mid_y - 1, mid_y + 1]
-                parking_rows.extend(rows_for_belt)
+                parking_rows.extend([mid_y - 1, mid_y + 1])
 
-        # build spaces on all selected rows, same x-range for all
         last_parking_x = start_x
         for row in parking_rows:
             for i in range(n_spaces):
                 x = start_x + i
-                if x >= width - 1:
-                    break
+                if x >= width - 1: break
                 last_parking_x = x
                 pos = (x, row)
                 s = ParkingSpace(self.next_id(), self, pos)
@@ -617,134 +531,88 @@ class ParkingLotModel(Model):
                 self.scheduler.add(s)
         
         self.parking_end_x = last_parking_x
-
         self.space_by_id = {s.unique_id: s for s in self.parking_spaces}
 
-        # --- reservation scheduling (simple single reservation per reserved spot) ---
+        # --- Reservations Setup (UPDATED FOR MULTIPLE) ---
         self.reservations = [] 
         self.total_reservations = 0
         self.total_reservations_fulfilled = 0
         self.total_reservations_released = 0
 
         if self.reservation_mode == "reservations" and self.reservation_percent > 0:
-            # pick R% of spaces (leftmost-first for determinism)
+            # 1. Select the spots that CAN accept reservations (e.g., top 20%)
             sorted_spaces = sorted(self.parking_spaces, key=lambda s: (s.pos[0], s.pos[1]))
             reserve_count = int(round(self.reservation_percent * len(sorted_spaces)))
-            reserved_spaces = sorted_spaces[:reserve_count]
-            for s in reserved_spaces:
-                s.is_reserved = True
+            reservable_spaces = sorted_spaces[:reserve_count]
+
+            # 2. For each reservable spot, generate sequential non-overlapping reservations
+            for s in reservable_spaces:
+                s.is_reserved = True  # Just a marker for "VIP Enabled"
                 s.held = False
-                s.held_until = None
-
-                # schedule a single reservation time (simple model)
-                t = self.random.randrange(self.day_length_steps)
-                reservation = {
-                    "space_id": s.unique_id,
-                    "time": t,
-                    "handled": False,
-                    "fulfilled": False,
-                    "released_at": None,
-                }
-                self.reservations.append(reservation)
-                self.total_reservations += 1
-
+                
+                # Start planning from step 50
+                plan_t = 50
+                while plan_t < self.day_length_steps - 100:
+                    # Chance to have a reservation here
+                    if self.random.random() < 0.6: # 60% chance to book this slot
+                        duration = self.random.randint(60, 200)
+                        
+                        reservation = {
+                            "space_id": s.unique_id,
+                            "time": plan_t,
+                            "duration": duration,
+                            "handled": False,
+                            "fulfilled": False,
+                            "released_at": None,
+                        }
+                        self.reservations.append(reservation)
+                        self.total_reservations += 1
+                        
+                        # Move time forward: duration + buffer
+                        plan_t += duration + self.random.randint(30, 60)
+                    else:
+                        # Skip some time (public parking allowed during this gap)
+                        plan_t += self.random.randint(60, 180)
 
         self.datacollector = DataCollector(
             model_reporters={
                 "OccupiedSpaces": lambda m: sum(1 for s in m.parking_spaces if s.occupied),
                 "FreeSpaces": lambda m: sum(1 for s in m.parking_spaces if not s.occupied),
                 "NumDrivers": self.get_num_drivers,
-                "ParkedCount": lambda m: m.parked_count,
                 "CarsInside": lambda m: m.cars_inside,
                 "CarsWaitingAtGate": lambda m: m.cars_waiting_for_gate(),
-
-                # --- novos KPIs agregados ---
-                "TotalArrivals": lambda m: m.total_arrivals,
-                "TurnedAway": lambda m: m.total_turned_away,
-                "TotalQueueTime": lambda m: m.total_queue_time,
-                "TotalQueuedDrivers": lambda m: m.total_queued_drivers,
-                "AvgQueueTimeSoFar": lambda m: (
-                    m.total_queue_time / m.total_queued_drivers
-                    if m.total_queued_drivers > 0 else 0
-                ),
-                #Helper
-                "ArrivalProb": lambda m: m.arrival_prob_at_step(m.current_step),
-
-                "TotalReservations": lambda m: m.total_reservations,
                 "ReservationsFulfilled": lambda m: m.total_reservations_fulfilled,
-                "ReservationsReleased": lambda m: m.total_reservations_released,
-                "ReservedIdleSpaces": lambda m: sum(
-                    1 for s in m.parking_spaces if getattr(s, "is_reserved", False) and not s.occupied and not getattr(s, "held", False)
-                ),
-
             }
         )
 
     def update_dynamic_price(self):
-        """
-        Adjust price based on occupancy rate.
-        < 50% occupied: Discount
-        50% - 80% occupied: Base Price
-        > 80% occupied: Surge Price
-        """
         if not self.enable_dynamic_pricing:
             self.current_per_minute_rate = self.base_per_minute
             return
-
         total_spots = len(self.parking_spaces)
         occupied = sum(1 for s in self.parking_spaces if s.occupied)
         occupancy_rate = occupied / total_spots if total_spots > 0 else 0
-
         if occupancy_rate < 0.50:
-            self.current_per_minute_rate = self.base_per_minute * 0.5  # 50% off
+            self.current_per_minute_rate = self.base_per_minute * 0.5
         elif occupancy_rate > 0.80:
-            self.current_per_minute_rate = self.base_per_minute * 2.0  # Surge pricing
+            self.current_per_minute_rate = self.base_per_minute * 2.0
         else:
             self.current_per_minute_rate = self.base_per_minute
 
-    
-
     def cars_waiting_for_gate(self):
-        return sum(
-            1
-            for a in self.scheduler.agents
-            if isinstance(a, Driver) and getattr(a, "waiting_for_gate", False)
-        )
+        return sum(1 for a in self.scheduler.agents if isinstance(a, Driver) and getattr(a, "waiting_for_gate", False))
     
     def arrival_prob_at_step(self, t: int) -> float:
-        """
-        Time-varying arrival probability (per step), repeating every 'day_length_steps'.
-        'arrival_prob' acts as a scaling factor.
-        """
         tau = t % self.day_length_steps
         frac = tau / self.day_length_steps
-
-        # base profile (0..1 range), then scaled by self.arrival_prob
-        if frac < 0.15:
-            base = 0.10   # very early low
-        elif frac < 0.25:
-            base = 0.20   # early low
-        elif frac < 0.40:
-            base = 0.50   # ramping up
-        elif frac < 0.55:
-            base = 0.70   # peak
-        elif frac < 0.70:
-            base = 0.40   # 
-        elif frac < 0.85:
-            base = 0.20   # ramping down
-        else:
-            base = 0.10   # late low
-
-        p = self.arrival_prob * base
-
-        # clamp to [0, 1]
-        if p < 0.0:
-            return 0.0
-        if p > 1.0:
-            return 1.0
-        return p
-
-
+        if frac < 0.15: base = 0.10
+        elif frac < 0.25: base = 0.20
+        elif frac < 0.40: base = 0.50
+        elif frac < 0.55: base = 0.70
+        elif frac < 0.70: base = 0.40
+        elif frac < 0.85: base = 0.20
+        else: base = 0.10
+        return self.arrival_prob * base
 
     def is_parking_cell(self, pos):
         return any(s.pos == pos for s in self.parking_spaces)
@@ -757,6 +625,9 @@ class ParkingLotModel(Model):
         return any(isinstance(a, Driver) for a in agents)
 
     def _reserved_space_ids(self):
+        # Only active reservations matter? 
+        # Actually, for get_free_unreserved_space_id, we now IGNORE reservations
+        # unless they are actively held/occupied.
         reserved = set()
         for a in self.scheduler.agents:
             if isinstance(a, Driver) and a.target_space_id is not None:
@@ -764,31 +635,40 @@ class ParkingLotModel(Model):
         return reserved
 
     def get_free_unreserved_space_id(self):
-        reserved = self._reserved_space_ids()
+        """
+        UPDATED: Can now return a 'reservable' spot if it is currently empty.
+        We do NOT filter out s.is_reserved anymore.
+        """
+        reserved_targets = self._reserved_space_ids()
+        
+        # Candidate spots: Not occupied, not targeted by someone else, not 'Held' for no-show
         free = [
             s for s in self.parking_spaces
-            if (not s.occupied) and (s.unique_id not in reserved) and (not s.is_reserved)
+            if (not s.occupied) 
+            and (s.unique_id not in reserved_targets)
+            and (not getattr(s, "held", False))
         ]
+        
         if not free:
             return None
+        # Fill strictly from left to right to maximize efficiency
         free.sort(key=lambda s: s.pos[0])
         return free[0].unique_id
 
     def free_unreserved_capacity(self):
-        reserved = self._reserved_space_ids()
+        reserved_targets = self._reserved_space_ids()
         return sum(
             1 for s in self.parking_spaces
-            if (not s.occupied) and (s.unique_id not in reserved) and (not s.is_reserved)
+            if (not s.occupied) 
+            and (s.unique_id not in reserved_targets)
+            and (not getattr(s, "held", False))
         )
     
     def reserved_space_available_for(self, space_id):
-        """Return True if the reserved space exists and is free (not occupied)."""
         s = self.space_by_id.get(space_id, None)
-        if s is None:
-            return False
-        # If occupied -> unavailable. If held but driver is the reserved one, driver will be created tied to reservation.
+        if s is None: return False
+        # Available if not occupied (or occupied by self, but we are at gate)
         return not s.occupied
-
 
     def process_reservations(self):
         if self.reservation_mode != "reservations":
@@ -797,28 +677,44 @@ class ParkingLotModel(Model):
         for r in self.reservations:
             if r["handled"]:
                 continue
+            
+            # TRIGGER RESERVATION
             if r["time"] == self.current_step:
                 s = self.space_by_id[r["space_id"]]
-                if self.random.random() < (1 - self.reservation_no_show_prob):
+                
+                # --- EVICTION LOGIC ---
+                # If the spot is currently occupied by a "normal" driver, KICK THEM OUT.
+                if s.occupied and s.occupant_id is not None:
+                    # Find the driver agent
+                    # Since we don't have a direct dict of agents by ID, we search or use occupant_id lookup if we had it.
+                    # We'll scan scheduler for safety.
+                    occupant_agent = None
+                    for agent in self.scheduler.agents:
+                        if agent.unique_id == s.occupant_id and isinstance(agent, Driver):
+                            occupant_agent = agent
+                            break
                     
-                    # Create the VIP Driver
+                    if occupant_agent:
+                        # BOOT THEM: Set time to 0 -> State to EXITING next step
+                        occupant_agent.remaining_time = 0
+                        occupant_agent.state = "EXITING"
+                        # Note: Physically they are still there. The VIP might have to wait a moment.
+
+                # Decide if VIP shows up
+                if self.random.random() < (1 - self.reservation_no_show_prob):
                     drv = Driver(self.next_id(), self, reserved=True, reservation=r)
                     drv.arrival_step = self.current_step
-                    
-                    # Set agreed rate for reserved drivers
                     drv.agreed_rate = self.current_per_minute_rate
-                    drv.is_reserved = True
-                    
                     self.scheduler.add(drv)
                     r["handled"] = True
                 else:
-                    # (No-show logic remains the same)
+                    # No-Show: Hold the spot (nobody else can take it)
                     s.held = True
                     s.held_until = self.current_step + self.reservation_hold_time
                     r["handled"] = True
                     r["released_at"] = s.held_until
 
-        # release holds whose time expired
+        # Release holds
         for s in self.parking_spaces:
             if getattr(s, "held", False) and s.held_until is not None and self.current_step >= s.held_until:
                 s.held = False
@@ -830,32 +726,23 @@ class ParkingLotModel(Model):
         if self.random.random() >= p:
             return
 
-        # houve uma tentativa de chegada neste tick
         self.total_arrivals += 1
-
-        # Generate a random Willingness To Pay (WTP) for this potential driver (per minute in euros)
-        driver_wtp = self.random.uniform(0.01, 0.05)
-
-        # Update the sign rate before they look at it
+        # Increase WTP range to make drivers more willing to pay higher rates
+        driver_wtp = self.random.uniform(0.02, 0.08)  # Adjusted from (0.01, 0.05)
         self.update_dynamic_price()
 
         if self.current_per_minute_rate > driver_wtp:
             self.total_turned_away += 1
             self.total_price_turnaways += 1
-            return  # Driver leaves immediately due to price
+            return
 
-        # comprimento atual da fila (condutores com waiting_for_gate == True)
         current_queue_len = self.cars_waiting_for_gate()
-
-        # --- NOT ENTERING: fila demasiado longa, condutor nem entra ---
-        if current_queue_len >= self.max_queue_length:
-            # Probabilistic not-entering once queue is too long
-            if self.random.random() < self.p_not_enter_long_queue + self.cars_waiting_for_gate() * 0.01:
+        if current_queue_len >= 999:  
+            if self.random.random() < 0.90: 
                 self.total_turned_away += 1
                 self.total_not_entered_long_queue += 1
                 return
 
-        # caso contrário, o carro entra mesmo no sistema (walk-in)
         drv = Driver(self.next_id(), self)
         drv.arrival_step = self.current_step
         drv.agreed_rate = self.current_per_minute_rate
@@ -864,36 +751,17 @@ class ParkingLotModel(Model):
 
 
     def step(self):
-        # avançar o relógio do modelo
         self.current_step += 1
-
-        # process scheduled reservations first (may create reserved drivers / holds)
         self.process_reservations()
-
-        # tentar gerar nova chegada
         self.maybe_arrive()
-
-        # atualizar todos os agentes
         self.scheduler.step()
-
-        # recolher dados
         self.datacollector.collect(self)
-
 
         if self.current_step == self.day_length_steps:
             self.save_data()
             print(f"Day ended. Data saved to 'simulation_results.csv'")
 
     def save_data(self):
-        """
-        Exports the collected data to a CSV file for analysis in Excel/Pandas.
-        """
-        # Get the dataframe from the datacollector
         df = self.datacollector.get_model_vars_dataframe()
-        
-        # Save to CSV
         filename = "simulation_results.csv"
         df.to_csv(filename)
-        
-
-
