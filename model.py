@@ -544,8 +544,8 @@ class ParkingLotModel(Model):
             for s in reservable_spaces:
                 s.is_reserved = True  # Just a marker for "VIP Enabled"
                 
-                # Start planning from step 50
-                plan_t = 50
+                # Start planning from step 0
+                plan_t = 0
                 while plan_t < self.day_length_steps - 100:
                     # Chance to have a reservation here
                     if self.random.random() < 0.6: # 60% chance to book this slot
@@ -636,6 +636,7 @@ class ParkingLotModel(Model):
             s for s in self.parking_spaces
             if (not s.occupied) 
             and (s.unique_id not in reserved_targets)
+            and not s.is_reserved
         ]
         
         if not free:
@@ -650,6 +651,7 @@ class ParkingLotModel(Model):
             1 for s in self.parking_spaces
             if (not s.occupied) 
             and (s.unique_id not in reserved_targets)
+            and not s.is_reserved
         )
     
     def reserved_space_available_for(self, space_id):
