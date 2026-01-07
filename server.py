@@ -19,12 +19,9 @@ def agent_portrayal(agent):
     if isinstance(agent, ParkingSpace):
         # safe checks for reservation attributes
         is_reserved = getattr(agent, "is_reserved", False)
-        held = getattr(agent, "held", False)
         color = "#cccccc"
         if agent.occupied:
             color = "#ff5555"  # occupied
-        elif held:
-            color = "#ffcc66"  # reserved but held (no-show hold)
         elif is_reserved:
             color = "#cceeff"  # reserved free spot
         return {
@@ -81,14 +78,12 @@ class KPIPanel(TextElement):
 
         total_res = getattr(model, "total_reservations", 0)
         res_fulfilled = getattr(model, "total_reservations_fulfilled", 0)
-        res_released = getattr(model, "total_reservations_released", 0)
 
         reserved_idle = sum(
             1
             for s in getattr(model, "parking_spaces", [])
             if getattr(s, "is_reserved", False)
             and not s.occupied
-            and not getattr(s, "held", False)
         )
 
         # --- CSS STYLING APPLIED HERE ---
@@ -137,7 +132,6 @@ class KPIPanel(TextElement):
                 <tr><td>Mode</td><td style="text-align:right">{getattr(model, 'reservation_mode', 'none')}</td></tr>
                 <tr><td>Scheduled</td><td style="text-align:right">{total_res}</td></tr>
                 <tr><td>Fulfilled</td><td style="text-align:right">{res_fulfilled}</td></tr>
-                <tr><td>Released</td><td style="text-align:right">{res_released}</td></tr>
                 <tr><td>Idle Reserved</td><td style="text-align:right">{reserved_idle}</td></tr>
             </table>
 
@@ -205,7 +199,6 @@ def make_server(port=8521):
             "parking_strategy": "Reservations", 
             "reservation_percent": 0.20,             
             "reservation_hold_time": 30,              
-            "reservation_no_show_prob": 0.05,
             "day_length_steps": 1000,
             "arrival_prob": 0.7,        
         },

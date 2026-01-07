@@ -32,10 +32,8 @@ class ParkingSpace(Agent):
         self.pos = pos
         self.occupied = False
         self.occupant_id = None
-        
         self.is_reserved = False
-        self.held = False
-        self.held_until = None
+
 
     def step(self):
         pass
@@ -441,7 +439,6 @@ class ParkingLotModel(Model):
         seed=None,
         reservation_percent=0.0,        
         reservation_hold_time=0.05,       
-        reservation_no_show_prob=0.1,   
         parking_strategy="Standard",
     ):
         super().__init__(seed=seed)
@@ -454,7 +451,6 @@ class ParkingLotModel(Model):
         self.p_balk_per_step_after_wait = p_balk_per_step_after_wait
         self.reservation_percent = reservation_percent
         self.reservation_hold_time = reservation_hold_time
-        self.reservation_no_show_prob = reservation_no_show_prob
         self.parking_strategy = parking_strategy
         
         self.base_per_minute = 0.022
@@ -537,7 +533,6 @@ class ParkingLotModel(Model):
         self.reservations = [] 
         self.total_reservations = 0
         self.total_reservations_fulfilled = 0
-        self.total_reservations_released = 0
 
         if self.reservation_mode == "reservations" and self.reservation_percent > 0:
             # 1. Select the spots that CAN accept reservations (e.g., top 20%)
@@ -548,7 +543,6 @@ class ParkingLotModel(Model):
             # 2. For each reservable spot, generate sequential non-overlapping reservations
             for s in reservable_spaces:
                 s.is_reserved = True  # Just a marker for "VIP Enabled"
-                s.held = False
                 
                 # Start planning from step 50
                 plan_t = 50
@@ -635,10 +629,6 @@ class ParkingLotModel(Model):
         return reserved
 
     def get_free_unreserved_space_id(self):
-        """
-        UPDATED: Can now return a 'reservable' spot if it is currently empty.
-        We do NOT filter out s.is_reserved anymore.
-        """
         reserved_targets = self._reserved_space_ids()
         
         # Candidate spots: Not occupied, not targeted by someone else, not 'Held' for no-show
@@ -646,7 +636,6 @@ class ParkingLotModel(Model):
             s for s in self.parking_spaces
             if (not s.occupied) 
             and (s.unique_id not in reserved_targets)
-            and (not getattr(s, "held", False))
         ]
         
         if not free:
@@ -661,7 +650,6 @@ class ParkingLotModel(Model):
             1 for s in self.parking_spaces
             if (not s.occupied) 
             and (s.unique_id not in reserved_targets)
-            and (not getattr(s, "held", False))
         )
     
     def reserved_space_available_for(self, space_id):
@@ -700,26 +688,12 @@ class ParkingLotModel(Model):
                         occupant_agent.state = "EXITING"
                         # Note: Physically they are still there. The VIP might have to wait a moment.
 
-                # Decide if VIP shows up
-                if self.random.random() < (1 - self.reservation_no_show_prob):
-                    drv = Driver(self.next_id(), self, reserved=True, reservation=r)
-                    drv.arrival_step = self.current_step
-                    drv.agreed_rate = self.current_per_minute_rate
-                    self.scheduler.add(drv)
-                    r["handled"] = True
-                else:
-                    # No-Show: Hold the spot (nobody else can take it)
-                    s.held = True
-                    s.held_until = self.current_step + self.reservation_hold_time
-                    r["handled"] = True
-                    r["released_at"] = s.held_until
-
-        # Release holds
-        for s in self.parking_spaces:
-            if getattr(s, "held", False) and s.held_until is not None and self.current_step >= s.held_until:
-                s.held = False
-                s.held_until = None
-                self.total_reservations_released += 1
+                # Always create VIP (removed no-show chance)
+                drv = Driver(self.next_id(), self, reserved=True, reservation=r)
+                drv.arrival_step = self.current_step
+                drv.agreed_rate = self.current_per_minute_rate
+                self.scheduler.add(drv)
+                r["handled"] = True
 
     def maybe_arrive(self):
         p = self.arrival_prob_at_step(self.current_step)
@@ -737,7 +711,7 @@ class ParkingLotModel(Model):
             return
 
         current_queue_len = self.cars_waiting_for_gate()
-        if current_queue_len >= 999:  
+        if current_queue_len >= 15:  
             if self.random.random() < 0.90: 
                 self.total_turned_away += 1
                 self.total_not_entered_long_queue += 1
