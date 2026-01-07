@@ -2,7 +2,7 @@
 from random import random
 from mesa.visualization.modules import CanvasGrid, ChartModule, TextElement
 from mesa.visualization.ModularVisualization import ModularServer
-from model import ParkingLotModel, ParkingSpace, Driver, Gate
+from model import ParkingLotModel, ParkingSpace, Driver, Gate , VIPParkingSpace
 
 def agent_portrayal(agent):
     if isinstance(agent, Gate):
@@ -15,15 +15,27 @@ def agent_portrayal(agent):
             "Color": color,
             "Layer": 2,
         }
-
-    if isinstance(agent, ParkingSpace):
+    
+    if isinstance(agent, VIPParkingSpace):
         # safe checks for reservation attributes
-        is_reserved = getattr(agent, "is_reserved", False)
+        color = "#00bfff"
+        if False : #agent.occupied:
+            color = "#ff5555"  # occupied
+        elif agent.is_reserved:
+            color = "#ffccaa"  # reserved free spot (different color for VIP)
+        return {
+            "Shape": "rect",
+            "w": 0.9,
+            "h": 0.9,
+            "Filled": "true",
+            "Color": color,
+            "Layer": 0,
+        }
+    elif isinstance(agent, ParkingSpace):
+        # safe checks for reservation attributes
         color = "#cccccc"
         if agent.occupied:
             color = "#ff5555"  # occupied
-        elif is_reserved:
-            color = "#cceeff"  # reserved free spot
         return {
             "Shape": "rect",
             "w": 0.9,

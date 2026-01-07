@@ -30,13 +30,109 @@ class ParkingSpace(Agent):
     def __init__(self, unique_id, model, pos):
         super().__init__(unique_id, model)
         self.pos = pos
+        self.allocated = False
         self.occupied = False
         self.occupant_id = None
-        self.is_reserved = False
 
+    def notOccupiedUntil(self, step=None):
+        """Check if the space is free until the given step."""
+        if step is None:
+            return not self.occupied and not self.allocated
+        return not self.occupied and not self.allocated
 
     def step(self):
         pass
+
+class VIPParkingSpace(ParkingSpace):
+    def __init__(self, unique_id, model, pos):
+        super().__init__(unique_id, model, pos)
+
+        self.margin_of_safety = 25
+        self.reservations = []      # FULL DAY SCHEDULE
+        self.current_blocked = False
+        self.is_reserved = False
+        self.currently_reserved = False
+
+        self._generate_reservation_schedule()
+
+    def notOccupiedUntil(self, start_step, end_step):
+        """Check if the space is free for the entire duration."""
+        if self.occupied or self.allocated:
+            return False
+
+        for r in self.reservations:
+            # If the reservation starts before the driver leaves 
+            # AND the reservation ends after the driver arrives
+            res_start_with_margin = r["start"] - self.margin_of_safety
+            if res_start_with_margin < end_step and r["end"] > start_step:
+                return False
+
+        return True
+
+    def _generate_reservation_schedule(self):
+        """
+        Generate non-overlapping reservations for the entire day.
+        Normal cars may use the space between reservations.
+        """
+        t = 0
+        day = self.model.day_length_steps
+        max_reservations = 3
+
+        while t < day - 150 and len(self.reservations) < max_reservations:
+            if self.random.random() < 0.6:
+                # LONGER reservations
+                duration = self.random.randint(250, 450)
+
+                self.reservations.append({
+                    "start": t,
+                    "end": min(t + duration, day)
+                })
+
+                # Larger buffer between reservations
+                t += duration + self.random.randint(60, 120)
+            else:
+                # Larger public gaps
+                t += self.random.randint(120, 240)
+
+    def is_available_for_public(self, step):
+        """
+        Public drivers can park unless:
+        - occupied
+        - inside safety window before next reservation
+        """
+        if self.occupied:
+            return False
+
+        for r in self.reservations:
+            # Too close to upcoming reservation
+            if r["start"] - self.margin_of_safety <= step < r["start"]:
+                return False
+            # During reservation
+            if r["start"] <= step < r["end"]:
+                return False
+
+        return True
+
+    def next_reservation(self, step):
+        """Return next reservation after this step (or None)."""
+        for r in self.reservations:
+            if r["start"] > step:
+                return r
+        return None
+
+    def step(self):
+        """Optional: purely for visualization/debugging"""
+        # if reserved right now turn on flag
+        self.is_reserved = False
+        current_step = self.model.current_step
+        for r in self.reservations:
+            if r["start"] <= current_step < r["end"]:
+                self.is_reserved = True
+                break
+
+        self.current_blocked = not self.is_available_for_public(
+            self.model.current_step
+        )
 
 
 class Gate(Agent):
@@ -58,16 +154,6 @@ class Driver(Agent):
         
         self.target_space_id = None
         self.current_space_id = None
-
-        #Reservation info
-        self.reserved_customer = reserved
-        self.reservation = reservation 
-
-        if self.reserved_customer and self.reservation is not None:
-            self.target_space_id = reservation['space_id']
-            # As soon as this agent is created, we check the spot and boot anyone there.
-            if self.target_space_id is not None:
-                self.force_eviction_of_occupant(self.target_space_id)
 
         self.parking_duration = parking_duration or parking_duration_steps(rng=self.random)
         self.remaining_time = self.parking_duration
@@ -92,29 +178,21 @@ class Driver(Agent):
             x, y = self.pos
 
             if (x, y) == (gx, gy):
-                can_enter = False
-                if self.reserved_customer:
-                    # VIPs always try to enter. If spot is occupied, we will have booted the occupant.
-                    # However, physically it might still be full. The VIP waits or enters.
-                    # For simplicity, VIP enters if the reservation is valid.
-                    can_enter = True 
-                else:
-                    if self.model.free_unreserved_capacity() > 0:
-                        can_enter = True
-                
+                arrival_time = self.model.current_step
+                departure_time = arrival_time + self.parking_duration
+
+                can_enter = self.model.free_unreserved_capacity(arrival_time, departure_time) > 0
+
                 if can_enter:
                     # customer didnt have to wait queue was empty
                     self.model.total_queue_time += 0 
                     self.model.total_queued_drivers += 1
-                    if self.reserved_customer:
-                        self._set_belt_lane_from_target()
-                        self.model.cars_inside += 1
-                        self.state = "DRIVING_TO_SPOT"
-                    else:
-                        self.target_space_id = self.model.get_free_unreserved_space_id()
-                        self._set_belt_lane_from_target()
-                        self.model.cars_inside += 1
-                        self.state = "DRIVING_TO_SPOT"
+                    self.target_space_id = self.model.get_free_unreserved_space_id(arrival_time, departure_time)
+                    space = self.model.space_by_id.get(self.target_space_id)
+                    space.allocated = True
+                    self._set_belt_lane_from_target()
+                    self.model.cars_inside += 1
+                    self.state = "DRIVING_TO_SPOT"
                     return
                 else:
                     # Cannot enter: wait at gate
@@ -144,27 +222,21 @@ class Driver(Agent):
 
             # Car at the gate cell (front of the line): check entry
             if (x, y) == (gx, gy):
-                can_enter = False
-                if self.reserved_customer:
-                    can_enter = True
-                else:
-                    if self.model.free_unreserved_capacity() > 0:
-                        can_enter = True
-                
+                arrival_time = self.model.current_step
+                departure_time = arrival_time + self.parking_duration
+
+                can_enter = self.model.free_unreserved_capacity(arrival_time, departure_time) > 0
+
                 if can_enter:
+                    # customer didnt have to wait queue was empty
                     self._stop_queueing(entered=True)
-                    if self.reserved_customer:
-                        self._set_belt_lane_from_target()
-                        self.model.cars_inside += 1
-                        self.waiting_for_gate = False
-                        self.state = "DRIVING_TO_SPOT"
-                    else:
-                        self.target_space_id = self.model.get_free_unreserved_space_id()
-                        self._set_belt_lane_from_target()
-                        self.model.cars_inside += 1
-                        self.waiting_for_gate = False
-                        self.state = "DRIVING_TO_SPOT"
-                    return
+                    self.target_space_id = self.model.get_free_unreserved_space_id(arrival_time, departure_time)
+                    space = self.model.space_by_id.get(self.target_space_id)
+                    space.allocated = True
+                    self._set_belt_lane_from_target()
+                    self.model.cars_inside += 1
+                    self.waiting_for_gate = False
+                    self.state = "DRIVING_TO_SPOT"
                 else:
                     self.waiting_for_gate = True
                     return
@@ -252,11 +324,6 @@ class Driver(Agent):
                 self.current_space_id = space.unique_id
                 self.state = "PARKED"
                 self.model.parked_count += 1
-
-                if self.reserved_customer and self.reservation is not None:
-                    if not self.reservation.get("fulfilled", False):
-                        self.reservation["fulfilled"] = True
-                        self.model.total_reservations_fulfilled += 1
             return
 
         lane_y = self.belt_lane_y if self.belt_lane_y is not None else self.model.road_y
@@ -302,8 +369,6 @@ class Driver(Agent):
             self.model.parked_count += 1
             
             price_to_pay = self.parking_duration * getattr(self, "agreed_rate", self.model.base_per_minute)
-            if getattr(self, "is_reserved", False):
-                price_to_pay += self.model.reservation_fee
             self.model.total_revenue += price_to_pay
     
     def _set_belt_lane_from_target(self):
@@ -354,6 +419,7 @@ class Driver(Agent):
         self.try_move_to((nx, ny))
 
         if space is not None and prev == space.pos and self.pos != space.pos:
+            space.allocated = False
             space.occupied = False
             space.occupant_id = None
             self.target_space_id = None
@@ -373,6 +439,7 @@ class Driver(Agent):
                     agent.remaining_time = 0
                     agent.state = "EXITING"
                     # Instantly vacate the spot
+                    space.allocated = False
                     space.occupied = False
                     space.occupant_id = None
                     # Move the squatter to the road lane to start exiting (avoid blocking)
@@ -472,52 +539,16 @@ class ParkingLotModel(Model):
                 if x >= width - 1: break
                 last_parking_x = x
                 pos = (x, row)
-                s = ParkingSpace(self.next_id(), self, pos)
+                if (self.parking_strategy == "Reservations" ):
+                    s = VIPParkingSpace(self.next_id(), self, pos)
+                else:
+                    s = ParkingSpace(self.next_id(), self, pos)
                 self.parking_spaces.append(s)
                 self.grid.place_agent(s, pos)
                 self.scheduler.add(s)
         
         self.parking_end_x = last_parking_x
         self.space_by_id = {s.unique_id: s for s in self.parking_spaces}
-
-        # --- Reservations Setup (UPDATED FOR MULTIPLE) ---
-        self.reservations = [] 
-        self.total_reservations = 0
-        self.total_reservations_fulfilled = 0
-
-        if self.reservation_mode == "reservations" and self.reservation_percent > 0:
-            # 1. Select the spots that CAN accept reservations (e.g., top 20%)
-            sorted_spaces = sorted(self.parking_spaces, key=lambda s: (s.pos[0], s.pos[1]))
-            reserve_count = int(round(self.reservation_percent * len(sorted_spaces)))
-            reservable_spaces = sorted_spaces[:reserve_count]
-
-            # 2. For each reservable spot, generate sequential non-overlapping reservations
-            for s in reservable_spaces:
-                s.is_reserved = True  # Just a marker for "VIP Enabled"
-                
-                # Start planning from step 0
-                plan_t = 0
-                while plan_t < self.day_length_steps - 100:
-                    # Chance to have a reservation here
-                    if self.random.random() < 0.6: # 60% chance to book this slot
-                        duration = self.random.randint(60, 200)
-                        
-                        reservation = {
-                            "space_id": s.unique_id,
-                            "time": plan_t,
-                            "duration": duration,
-                            "handled": False,
-                            "fulfilled": False,
-                            "released_at": None,
-                        }
-                        self.reservations.append(reservation)
-                        self.total_reservations += 1
-                        
-                        # Move time forward: duration + buffer
-                        plan_t += duration + self.random.randint(30, 60)
-                    else:
-                        # Skip some time (public parking allowed during this gap)
-                        plan_t += self.random.randint(60, 180)
 
         self.datacollector = DataCollector(
             model_reporters={
@@ -526,8 +557,25 @@ class ParkingLotModel(Model):
                 "NumDrivers": self.get_num_drivers,
                 "CarsInside": lambda m: m.cars_inside,
                 "CarsWaitingAtGate": lambda m: m.cars_waiting_for_gate(),
-                "ReservationsFulfilled": lambda m: m.total_reservations_fulfilled,
             }
+        )
+
+    def get_free_unreserved_space_id(self, start_step, until_step):
+        free = [
+            s for s in self.parking_spaces
+            # Pass both start and end times
+            if s.notOccupiedUntil(start_step, until_step)
+        ]
+        
+        if not free:
+            return None
+        free.sort(key=lambda s: s.pos[0])
+        return free[0].unique_id
+
+    def free_unreserved_capacity(self, start_step, until_step):
+        return sum(
+            1 for s in self.parking_spaces
+            if s.notOccupiedUntil(start_step, until_step)
         )
 
     def update_dynamic_price(self):
@@ -569,85 +617,6 @@ class ParkingLotModel(Model):
         agents = self.grid.get_cell_list_contents([pos])
         return any(isinstance(a, Driver) for a in agents)
 
-    def _reserved_space_ids(self):
-        # Only active reservations matter? 
-        # Actually, for get_free_unreserved_space_id, we now IGNORE reservations
-        # unless they are actively held/occupied.
-        reserved = set()
-        for a in self.scheduler.agents:
-            if isinstance(a, Driver) and a.target_space_id is not None:
-                reserved.add(a.target_space_id)
-        return reserved
-
-    def get_free_unreserved_space_id(self):
-        reserved_targets = self._reserved_space_ids()
-        
-        # Candidate spots: Not occupied, not targeted by someone else, not 'Held' for no-show
-        free = [
-            s for s in self.parking_spaces
-            if (not s.occupied) 
-            and (s.unique_id not in reserved_targets)
-            and not s.is_reserved
-        ]
-        
-        if not free:
-            return None
-        # Fill strictly from left to right to maximize efficiency
-        free.sort(key=lambda s: s.pos[0])
-        return free[0].unique_id
-
-    def free_unreserved_capacity(self):
-        reserved_targets = self._reserved_space_ids()
-        return sum(
-            1 for s in self.parking_spaces
-            if (not s.occupied) 
-            and (s.unique_id not in reserved_targets)
-            and not s.is_reserved
-        )
-    
-    def reserved_space_available_for(self, space_id):
-        s = self.space_by_id.get(space_id, None)
-        if s is None: return False
-        # Available if not occupied (or occupied by self, but we are at gate)
-        return not s.occupied
-
-    def process_reservations(self):
-        if self.reservation_mode != "reservations":
-            return
-
-        for r in self.reservations:
-            if r["handled"]:
-                continue
-            
-            # TRIGGER RESERVATION
-            if r["time"] == self.current_step:
-                s = self.space_by_id[r["space_id"]]
-                
-                # --- EVICTION LOGIC ---
-                # If the spot is currently occupied by a "normal" driver, KICK THEM OUT.
-                if s.occupied and s.occupant_id is not None:
-                    # Find the driver agent
-                    # Since we don't have a direct dict of agents by ID, we search or use occupant_id lookup if we had it.
-                    # We'll scan scheduler for safety.
-                    occupant_agent = None
-                    for agent in self.scheduler.agents:
-                        if agent.unique_id == s.occupant_id and isinstance(agent, Driver):
-                            occupant_agent = agent
-                            break
-                    
-                    if occupant_agent:
-                        # BOOT THEM: Set time to 0 -> State to EXITING next step
-                        occupant_agent.remaining_time = 0
-                        occupant_agent.state = "EXITING"
-                        # Note: Physically they are still there. The VIP might have to wait a moment.
-
-                # Always create VIP (removed no-show chance)
-                drv = Driver(self.next_id(), self, reserved=True, reservation=r)
-                drv.arrival_step = self.current_step
-                drv.agreed_rate = self.current_per_minute_rate
-                self.scheduler.add(drv)
-                r["handled"] = True
-
     def maybe_arrive(self):
         if (self.current_step >= self.day_length_steps):
             return
@@ -680,7 +649,6 @@ class ParkingLotModel(Model):
 
     def step(self):
         self.current_step += 1
-        self.process_reservations()
         self.maybe_arrive()
         self.scheduler.step()
         self.datacollector.collect(self)
