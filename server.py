@@ -200,7 +200,7 @@ def make_server(port=8521):
             "width": width,
             "height": height,
             "n_spaces": 10,
-            "parking_strategy": "Reservations", 
+            "parking_strategy": "Dynamic Pricing", 
             "reservation_percent": 0.20,             
             "reservation_hold_time": 30,              
             "day_length_steps": 1000,
