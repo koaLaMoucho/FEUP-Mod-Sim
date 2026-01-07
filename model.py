@@ -534,15 +534,14 @@ class ParkingLotModel(Model):
         if not self.enable_dynamic_pricing:
             self.current_per_minute_rate = self.base_per_minute
             return
+            
         total_spots = len(self.parking_spaces)
         occupied = sum(1 for s in self.parking_spaces if s.occupied)
         occupancy_rate = occupied / total_spots if total_spots > 0 else 0
-        if occupancy_rate < 0.50:
-            self.current_per_minute_rate = self.base_per_minute * 0.5
-        elif occupancy_rate > 0.80:
-            self.current_per_minute_rate = self.base_per_minute * 2.0
-        else:
-            self.current_per_minute_rate = self.base_per_minute
+        
+        multiplier = 0.5 + 2.0 * (occupancy_rate ** 2)
+        
+        self.current_per_minute_rate = self.base_per_minute * multiplier
 
     def cars_waiting_for_gate(self):
         return sum(1 for a in self.scheduler.agents if isinstance(a, Driver) and getattr(a, "waiting_for_gate", False))
@@ -657,8 +656,9 @@ class ParkingLotModel(Model):
             return
 
         self.total_arrivals += 1
-        # Increase WTP range to make drivers more willing to pay higher rates
-        driver_wtp = self.random.uniform(0.02, 0.08)  # Adjusted from (0.01, 0.05)
+        # Willingness to pay
+        driver_wtp = self.random.normalvariate(0.04, 0.02) 
+        driver_wtp = max(0.01, driver_wtp)
         self.update_dynamic_price()
 
         if self.current_per_minute_rate > driver_wtp:
