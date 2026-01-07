@@ -17,14 +17,14 @@ def parking_duration_steps(rng=random):
 
     # Short stay (e.g., quick errand)
     if u < 0.15:
-        return rng.randint(15, 119)
+        return rng.randint(40, 140)
 
     # Normal stay
     if u < 0.65:
-        return rng.randint(120, 239)
+        return rng.randint(240, 300)
 
     # Long stay
-    return rng.randint(240, 700)
+    return rng.randint(300, 700)
 
 class ParkingSpace(Agent):
     def __init__(self, unique_id, model, pos):
@@ -75,14 +75,9 @@ class Driver(Agent):
         # --- timestamps para KPIs ---
         self.arrival_step = None
         self.queue_entry_step = None
-
-        # --- estado de abandono (balked) ---
-        self.balked = False
+        
 
     def step(self):
-        if self.state == "BALKING":
-            self._balking_move()
-            return
 
         # ---------------- ARRIVING ----------------
         if self.state == "ARRIVING":
@@ -108,6 +103,9 @@ class Driver(Agent):
                         can_enter = True
                 
                 if can_enter:
+                    # customer didnt have to wait queue was empty
+                    self.model.total_queue_time += 0 
+                    self.model.total_queued_drivers += 1
                     if self.reserved_customer:
                         self._set_belt_lane_from_target()
                         self.model.cars_inside += 1
@@ -171,14 +169,6 @@ class Driver(Agent):
                     self.waiting_for_gate = True
                     return
 
-            # Balking logic
-            if not self.reserved_customer and self.queue_entry_step is not None:
-                waited = self.model.current_step - self.queue_entry_step
-                if waited >= self.model.max_wait_time:
-                    if self.random.random() < self.model.p_balk_per_step_after_wait:
-                        self._balk_and_start_leaving()
-                        return
-
             # Try to move right toward the gate
             nx, ny = x + 1, y
             old_pos = self.pos
@@ -228,37 +218,6 @@ class Driver(Agent):
                 self.model.total_queued_drivers += 1
             self.queue_entry_step = None
 
-    def _balk_and_start_leaving(self):
-        self.balked = True
-        self._stop_queueing(entered=False)
-        self.model.total_turned_away += 1
-        self.model.total_balked += 1
-        self.waiting_for_gate = False
-        self.state = "BALKING"
-        self._balked_moved_down = False
-    
-    def _balking_move(self):
-        x, y = self.pos
-        entry_x, entry_y = self.model.entry_pos
-        if not getattr(self, "_balked_moved_down", False):
-            new_y = y + 1
-            new_pos = (x, new_y) if new_y < self.model.grid.height else (x, y)
-            self._balked_moved_down = True
-        else:
-            if x > entry_x:
-                new_x = x - 1
-                new_pos = (new_x, y)
-            else:
-                if self in self.model.scheduler.agents:
-                    self.model.grid.remove_agent(self)
-                    self.model.scheduler.remove(self)
-                return
-        try:
-            self.model.grid.move_agent(self, new_pos)
-        except Exception:
-            if self in self.model.scheduler.agents:
-                self.model.grid.remove_agent(self)
-                self.model.scheduler.remove(self)
 
     # ---------- Collision + Lane Discipline ----------
     def try_move_to(self, new_pos):
@@ -430,12 +389,9 @@ class ParkingLotModel(Model):
         width,
         height,
         n_spaces,
-        arrival_prob=0.7,
-        max_queue_length=10,
-        max_wait_time=50,   
+        arrival_prob=0.7, 
         day_length_steps=1000,
-        p_not_enter_long_queue=0.80,
-        p_balk_per_step_after_wait=0.10,
+        p_not_enter_long_queue=0.90,
         seed=None,
         reservation_percent=0.0,        
         reservation_hold_time=0.05,       
@@ -448,7 +404,6 @@ class ParkingLotModel(Model):
         self.arrival_prob = arrival_prob
         self.day_length_steps = day_length_steps
         self.p_not_enter_long_queue = p_not_enter_long_queue
-        self.p_balk_per_step_after_wait = p_balk_per_step_after_wait
         self.reservation_percent = reservation_percent
         self.reservation_hold_time = reservation_hold_time
         self.parking_strategy = parking_strategy
@@ -468,13 +423,9 @@ class ParkingLotModel(Model):
         self.total_revenue = 0.0
         self.total_price_turnaways = 0
 
-        self.max_queue_length = max_queue_length
-        self.max_wait_time = max_wait_time
         self.current_step = 0
         self.total_arrivals = 0
-        self.total_turned_away = 0
         self.total_not_entered_long_queue = 0
-        self.total_balked = 0
         self.total_queue_time = 0
         self.total_queued_drivers = 0
         self.cars_inside = 0
@@ -696,6 +647,9 @@ class ParkingLotModel(Model):
                 r["handled"] = True
 
     def maybe_arrive(self):
+        if (self.current_step >= self.day_length_steps):
+            return
+
         p = self.arrival_prob_at_step(self.current_step)
         if self.random.random() >= p:
             return
@@ -706,14 +660,12 @@ class ParkingLotModel(Model):
         self.update_dynamic_price()
 
         if self.current_per_minute_rate > driver_wtp:
-            self.total_turned_away += 1
             self.total_price_turnaways += 1
             return
-
+        
         current_queue_len = self.cars_waiting_for_gate()
-        if current_queue_len >= 15:  
-            if self.random.random() < 0.90: 
-                self.total_turned_away += 1
+        if current_queue_len >= 6:  
+            if self.random.random() < self.p_not_enter_long_queue + 0.05 * (current_queue_len - 8):
                 self.total_not_entered_long_queue += 1
                 return
 
