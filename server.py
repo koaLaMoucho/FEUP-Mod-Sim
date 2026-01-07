@@ -64,11 +64,8 @@ def agent_portrayal(agent):
 class KPIPanel(TextElement):
     def render(self, model):
         arrivals = model.total_arrivals
-        turned_away = model.total_turned_away
-        balked = model.total_balked
 
-        turn_away_rate = (turned_away / arrivals) if arrivals > 0 else 0.0
-        balk_rate = (balked / arrivals) if arrivals > 0 else 0.0
+        didnt_enter = model.total_not_entered_long_queue + model.total_price_turnaways
 
         avg_queue_time = (
             model.total_queue_time / model.total_queued_drivers
@@ -112,10 +109,7 @@ class KPIPanel(TextElement):
             <h4 style="margin-bottom:5px; color: #444;">🚗 Traffic</h4>
             <table style="width:100%">
                 <tr><td>Total Arrivals</td><td style="text-align:right">{arrivals}</td></tr>
-                <tr><td>Turned Away</td><td style="text-align:right">{turned_away}</td></tr>
-                <tr><td>Balked</td><td style="text-align:right">{balked}</td></tr>
-                <tr><td>Turn-Away Rate</td><td style="text-align:right">{turn_away_rate:.2%}</td></tr>
-                <tr><td>Balk Rate</td><td style="text-align:right">{balk_rate:.2%}</td></tr>
+                <tr><td>Did Not Enter</td><td style="text-align:right">{didnt_enter}</td></tr>
             </table>
 
             <h4 style="margin-bottom:5px; color: #444;">⏱ Queue</h4>
@@ -123,8 +117,6 @@ class KPIPanel(TextElement):
                 <tr><td>Total Queue Time</td><td style="text-align:right">{model.total_queue_time}</td></tr>
                 <tr><td>Queued Drivers</td><td style="text-align:right">{model.total_queued_drivers}</td></tr>
                 <tr><td>Avg Queue Time</td><td style="text-align:right">{avg_queue_time:.2f}</td></tr>
-                <tr><td>Max Queue Length</td><td style="text-align:right">{model.max_queue_length}</td></tr>
-                <tr><td>Max Wait Time</td><td style="text-align:right">{model.max_wait_time}</td></tr>
             </table>
 
             <h4 style="margin-bottom:5px; color: #444;">🅿️ Reservations</h4>
