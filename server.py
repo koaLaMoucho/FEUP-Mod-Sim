@@ -66,9 +66,19 @@ def agent_portrayal(agent):
             portrayal["Shape"] = "rect"
             portrayal["w"] = 0.4
             portrayal["h"] = 0.4
+        if agent.state == "PARKED":
+            portrayal["Shape"] = "circle"
+            if getattr(agent, "is_reserved", False):
+                portrayal["r"] = 0.5
+            else:
+                portrayal["r"] = 0.8
+            
         else:
             portrayal["Shape"] = "circle"
-            portrayal["r"] = 0.8
+            if getattr(agent, "is_reserved", False):
+                portrayal["r"] = 0.5
+            else:
+                portrayal["r"] = 0.8
             
         return portrayal
 
@@ -85,15 +95,24 @@ class KPIPanel(TextElement):
             else 0.0
         )
 
-        total_res = getattr(model, "total_reservations", 0)
+        
         res_fulfilled = getattr(model, "total_reservations_fulfilled", 0)
-
         reserved_idle = sum(
             1
             for s in getattr(model, "parking_spaces", [])
-            if getattr(s, "is_reserved", False)
-            and not s.occupied
+            if isinstance(s, VIPParkingSpace) and s.is_reserved and not s.occupied
         )
+        reservations_not_fulfilled = getattr(model, "total_reservations_missed", 0)
+
+        occupancy_pct = model.current_occupancy * 100
+        avg_occupancy_pct = (
+            model.total_occupancy_sum / model.occupancy_samples * 100
+            if model.occupancy_samples > 0 else 0.0
+        )
+
+        reservation_fee = getattr(model, "reservation_base_price", 2.5)
+        reservations_fulfilled = getattr(model, "total_reservations_fulfilled", 0)
+        total_extra_revenue_from_reservations = reservations_fulfilled * reservation_fee
 
         # --- CSS STYLING APPLIED HERE ---
         # position: fixed -> Keeps it on the screen even if you scroll
@@ -134,9 +153,11 @@ class KPIPanel(TextElement):
             <h4 style="margin-bottom:5px; color: #444;">🅿️ Reservations</h4>
             <table style="width:100%">
                 <tr><td>Mode</td><td style="text-align:right">{getattr(model, 'reservation_mode', 'none')}</td></tr>
-                <tr><td>Scheduled</td><td style="text-align:right">{total_res}</td></tr>
+                <tr><td>Reservation Fee (€)</td><td style="text-align:right">€{reservation_fee:.2f}</td></tr>
                 <tr><td>Fulfilled</td><td style="text-align:right">{res_fulfilled}</td></tr>
-                <tr><td>Idle Reserved</td><td style="text-align:right">{reserved_idle}</td></tr>
+                <tr><td>Reservations Extra Revenue</td><td style="text-align:right">€{total_extra_revenue_from_reservations:.2f}</td></tr>
+                <tr><td>Idle Reserved Spaces</td><td style="text-align:right">{reserved_idle}</td></tr>
+                <tr><td>Not Fulfilled</td><td style="text-align:right">{reservations_not_fulfilled}</td></tr>
             </table>
 
             <h4 style="margin-bottom:5px; color: #444;">💰 Financials</h4>
@@ -145,6 +166,12 @@ class KPIPanel(TextElement):
                 <tr><td>Rate (€/min)</td><td style="text-align:right">€{getattr(model, 'current_per_minute_rate', model.base_per_minute):.3f}</td></tr>
                 <tr><td>Total Revenue</td><td style="text-align:right">€{getattr(model, 'total_revenue', 0.0):.2f}</td></tr>
                 <tr><td>Lost (Price)</td><td style="text-align:right">{getattr(model, 'total_price_turnaways', 0)}</td></tr>
+            </table>
+
+            <h4 style="margin-bottom:5px; color: #444;">📈 Occupancy</h4>
+            <table style="width:100%">
+                <tr><td>Current</td><td style="text-align:right">{occupancy_pct:.1f}%</td></tr>
+                <tr><td>Average</td><td style="text-align:right">{avg_occupancy_pct:.1f}%</td></tr>
             </table>
         </div>
         """
@@ -190,17 +217,32 @@ def make_server(port=8521):
         canvas_height=250,
     )
 
+    occupancy_chart = ChartModule(
+        [
+            {"Label": "ParkingOccupancy", "Color": "#0077bb"},
+            {"Label": "AvgParkingOccupancy", "Color": "#00aa55"},
+        ],
+        data_collector_name="datacollector",
+        canvas_width=800,
+        canvas_height=250,
+    )
+
     kpi_panel = KPIPanel()
 
     server = ModularServer(
         ParkingLotModel,
-        [grid, main_chart, queue_chart, reservation_chart, kpi_panel],
+        [grid,
+          main_chart, 
+          queue_chart, 
+          reservation_chart, 
+          occupancy_chart, 
+          kpi_panel],
         "Minimal Private Parking Lot",
         {
             "width": width,
             "height": height,
             "n_spaces": 10,
-            "parking_strategy": "Dynamic Pricing", 
+            "parking_strategy": "Reservations", 
             "reservation_percent": 0.20,             
             "reservation_hold_time": 30,              
             "day_length_steps": 1000,
