@@ -7,5 +7,6 @@ if __name__ == "__main__":
         server.launch()      # blocks until Ctrl+C
     except KeyboardInterrupt:
         print("Shutting down server...")
-        # The process will exit here, freeing the port.
+        # The process will exit here, freeing the port.~
+        sys.exit(0)
         pass
