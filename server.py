@@ -2,9 +2,19 @@
 from random import random
 from mesa.visualization.modules import CanvasGrid, ChartModule, TextElement
 from mesa.visualization.ModularVisualization import ModularServer
-from model import ParkingLotModel, ParkingSpace, Driver, Gate , VIPParkingSpace
+from model import ParkingLotModel, ParkingSpace, Driver, Gate, ReservationGate , VIPParkingSpace
 
 def agent_portrayal(agent):
+    if isinstance(agent, ReservationGate):
+        color = "#001466"
+        return {
+            "Shape": "rect",
+            "w": 0.9,
+            "h": 0.9,
+            "Filled": "true",
+            "Color": color,
+            "Layer": 2,
+        }
     if isinstance(agent, Gate):
         color = "black" if agent.kind == "IN" else "gray"
         return {
@@ -242,11 +252,12 @@ def make_server(port=8521):
             "width": width,
             "height": height,
             "n_spaces": 10,
-            "parking_strategy": "Reservations", 
+            "parking_strategy": "Dynamic Pricing", 
             "reservation_percent": 0.20,             
             "reservation_hold_time": 30,              
             "day_length_steps": 1000,
-            "arrival_prob": 0.7,        
+            "arrival_prob": 0.7,  
+            "has_reservation_lane": False  
         },
     )
     server.max_steps = 1000

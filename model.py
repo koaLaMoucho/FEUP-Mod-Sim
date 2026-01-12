@@ -94,8 +94,8 @@ class VIPParkingSpace(ParkingSpace):
         max_reservations = 2
 
         while t < day - 150 and len(self.reservations) < max_reservations:
-            if self.random.random() < 0.06:
-                duration = self.random.randint(250, 450)
+            if self.random.random() < 0.09:
+                duration = self.random.randint(350, 550)
                 res = Reservation(
                     start=t,
                     end=min(t + duration, day),
@@ -154,11 +154,18 @@ class VIPParkingSpace(ParkingSpace):
         )
 
 
+
 class Gate(Agent):
     def __init__(self, unique_id, model, pos, kind):
         super().__init__(unique_id, model)
         self.pos = pos
         self.kind = kind
+    def step(self):
+        pass
+
+class ReservationGate(Gate):
+    def __init__(self, unique_id, model, pos):
+        super().__init__(unique_id, model, pos , "IN")
     def step(self):
         pass
 
@@ -183,6 +190,8 @@ class Driver(Agent):
 
         self.is_reserved = reserved
         self.reservation_start_time = reservation
+
+        self.forward_clear_steps = None
 
     def _enter_parking(self):
         """Unified logic for a driver successfully passing the gate."""
@@ -215,17 +224,22 @@ class Driver(Agent):
     def step(self):
         # ---------------- ARRIVING ----------------
         if self.state == "ARRIVING":
-            entry_pos = self.model.entry_gate.pos
+            # If this is a reservation driver and a reservation lane exists,
+            # spawn them at the reservation spawn position. Otherwise use main entry.
+            if self.is_reserved and getattr(self.model, "has_reservation_lane", False):
+                entry_pos = self.model.reservation_sp.pos
+            else:
+                entry_pos = self.model.entry_gate.pos
+
             self.model.grid.place_agent(self, entry_pos)
             self.state = "APPROACHING_GATE"
             return
 
         # ---------------- APPROACHING_GATE ----------------
         if self.state == "APPROACHING_GATE":
-            gx, gy = self.model.entry_gate_2.pos
             x, y = self.pos
 
-            if (x, y) == (gx, gy):
+            if self.in_gate():
                 # Check if this driver is a VIP or a standard customer
                 if self.is_reserved:
                     space = self.model.space_by_id.get(self.target_space_id)
@@ -268,9 +282,8 @@ class Driver(Agent):
         # ---------------- WAITING_AT_GATE ----------------
         if self.state == "WAITING_AT_GATE":
             x, y = self.pos
-            gx, gy = self.model.entry_gate_2.pos
 
-            if (x, y) == (gx, gy):
+            if self.in_gate():
                 if self.is_reserved:
                     space = self.model.space_by_id.get(self.target_space_id)
                     if not space.occupied and not space.allocated:
@@ -374,12 +387,20 @@ class Driver(Agent):
                 self.state = "PARKED"
                 self.model.parked_count += 1
             return
-
+        
         lane_y = self.belt_lane_y if self.belt_lane_y is not None else self.model.road_y
-        start_x = self.model.parking_start_x
         nx, ny = x, y
 
-        if x <= start_x and y != lane_y:
+        if self.is_reserved:
+            print(f"Moving towards reserved spot in {space.pos} from {self.pos}. Target belt y: {lane_y}")
+
+
+        if x < self.model.gate_clear_x + (y < lane_y):
+            # Always move forward first, regardless of target row
+            nx = x + 1
+            ny = y
+        elif y != lane_y:
+            # Now it's safe to move vertically toward the belt lane
             ny = y + 1 if y < lane_y else y - 1
             nx = x
         elif y == lane_y and x != tx:
@@ -508,6 +529,26 @@ class Driver(Agent):
                     self.model.grid.move_agent(agent, exit_pos)
                     # Note: They will continue exiting from there in their next steps.
 
+    def in_gate(self):
+        """Return the Gate agent at the driver's current position, or None.
+
+        This checks the grid cell where the driver currently is and returns
+        the first agent that is an instance of `Gate` (includes
+        `ReservationGate`), or `None` if there is no gate here.
+        """
+        pos = self.pos
+        if pos is None:
+            return None
+        
+        if pos[0] <= 0:
+            return None
+
+        cell_contents = self.model.grid.get_cell_list_contents([pos])
+        for agent in cell_contents:
+            if isinstance(agent, Gate):
+                return agent
+
+        return None
 
 class ParkingLotModel(Model):
     def __init__(
@@ -521,8 +562,9 @@ class ParkingLotModel(Model):
         seed=None,
         reservation_percent=0.0,        
         reservation_hold_time=0.05, 
-        reservation_base_price=2.5,      
+        reservation_base_price=3,      
         parking_strategy="Standard",
+        has_reservation_lane =False,
     ):
         super().__init__(seed=seed)
         self.grid = MultiGrid(width, height, torus=False)
@@ -535,6 +577,7 @@ class ParkingLotModel(Model):
         self.reservation_hold_time = reservation_hold_time
         self.parking_strategy = parking_strategy
         self.reservation_base_price = reservation_base_price 
+        self.has_reservation_lane = has_reservation_lane and self.is_reservation_mode()
         
         self.base_per_minute = 0.022
         
@@ -571,18 +614,32 @@ class ParkingLotModel(Model):
         if width < min_width:
             raise ValueError(f"Grid width {width} too small.")
 
-        second_entry_x = width - (n_spaces + 6)
-        second_entry_pos = (second_entry_x, self.road_y)
+        self.cancela_x =  width - (n_spaces + 6)
+        self.gate_clear_x = self.cancela_x + 1
+        second_entry_pos = (self.cancela_x, self.road_y)
 
         self.entry_gate = Gate(self.next_id(), self, self.entry_pos, "IN")
         self.entry_gate_2 = Gate(self.next_id(), self, second_entry_pos, "IN")
+
+        # reservatin gate
+        if (self.has_reservation_lane):
+            dy = 1
+            reservation_sp_pos = (0, self.road_y + dy)
+            self.reservation_sp = ReservationGate(self.next_id(), self, reservation_sp_pos)
+            reservation_pos = (self.cancela_x , self.road_y + dy) # above the normal lane
+            self.reservation_gate = ReservationGate(self.next_id(), self, reservation_pos)
+            self.grid.place_agent(self.reservation_gate, reservation_pos)
+            self.grid.place_agent(self.reservation_sp, reservation_sp_pos)
+            self.scheduler.add(self.reservation_gate)
+            self.scheduler.add(self.reservation_sp)
+        
         self.grid.place_agent(self.entry_gate, self.entry_gate.pos)       
         self.grid.place_agent(self.entry_gate_2, second_entry_pos)
         self.scheduler.add(self.entry_gate)
         self.scheduler.add(self.entry_gate_2)
 
         self.parking_spaces = []
-        self.parking_start_x = second_entry_x + 3
+        self.parking_start_x = self.cancela_x + 3
         start_x = self.parking_start_x
         self.exit_pos = (self.parking_start_x + n_spaces + 2, self.road_y)
         print("Exit gate at:", self.exit_pos)
@@ -645,6 +702,9 @@ class ParkingLotModel(Model):
                 ),
             }
         )
+
+    def is_reservation_mode(self):
+        return self.parking_strategy == "Reservations"
 
     def get_free_unreserved_space_id(self, start_step, until_step):
         free = [
@@ -723,7 +783,7 @@ class ParkingLotModel(Model):
         if (current_price < 0.022):
             # varies between 0.011 and 0.022
             # the lower the price, the higher the prob
-            return min(self.arrival_prob * base * (1.0 + (0.022 - current_price) / 0.022), 1.0) * 1.5
+            return min(self.arrival_prob * base * (1.0 + (0.022 - current_price) / 0.022), 1.0) * 3
 
         return self.arrival_prob * base
 
