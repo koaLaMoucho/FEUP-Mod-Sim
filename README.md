@@ -35,7 +35,10 @@ From each simulation, the model generates values for key performance indicators 
 
 2. The simulation runs for a set number of steps ( 1000, representing 16 hours in real life).
 - Charts and KPI panel update in real-time to reflect the current state of the simulation.
-
+3. To change the strategy, modify the `"parking_strategy": ..., ` parameter in `server.py` to one of the following options:
+   - `"Standard"`: First Come First Serve (FCFS)
+   - `"Dynamic Pricing"`: Dynamic pricing based on occupancy
+   - `"Reservations"`: Reservation-based parking system
 
 ### Key Files
 - `model.py`: Core simulation logic, agents, and model class.
