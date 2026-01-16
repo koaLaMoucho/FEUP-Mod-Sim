@@ -50,3 +50,7 @@ From each simulation, the model generates values for key performance indicators 
 - Python 3.10+
 - Mesa 2.3.2 (installed via `requirements.txt`)
 
+
+## Important Links
+
+- [Project Report](https://www.overleaf.com/read/krmqwqbwgrjh#fad616)
