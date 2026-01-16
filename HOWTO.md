@@ -32,6 +32,7 @@ From each simulation, the model generates values for key performance indicators 
 ## Usage
 ### Running the Simulation
 1. To start the web-based visualization server:
+- Go to the project directory in your terminal, the folder is `source`
 
 - Execute the following command in the terminal:
    ```
