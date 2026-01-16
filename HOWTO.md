@@ -1,10 +1,10 @@
 # Mod & Sim: Parking Lot Simulation
 ## Delivery Organizations
-Slide-deck presentations: docs folder
-Report: PDF in docs folder and Overleaf shared link at the bottom of the page
-Short Video: Link at the bottom of the page
-Source code: Python files
-HOWTO file is this one
+- Slide-deck presentations: docs folder
+- Report: PDF in docs folder and Overleaf shared link at the bottom of the page- 
+- Short Video: Link at the bottom of the page
+- Source code: Python files
+- HOWTO file is this one
 
 ## Overview
 Parking management, especially in urban areas of high demand, poses a challenge for highly populated cities, such as Porto and Lisbon, which is caused by the scarcity of the resources and the stochastic nature of the driver’s behavior. This project aims to understand the parking allocation problem and solve it by modeling the interactions between drivers and the infrastructure to evaluate the different management strategies. 
