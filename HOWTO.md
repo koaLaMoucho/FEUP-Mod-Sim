@@ -62,3 +62,4 @@ From each simulation, the model generates values for key performance indicators 
 
 - Project Report - https://www.overleaf.com/read/krmqwqbwgrjh#fad616
 - Videos - https://drive.google.com/drive/folders/1FCdXKTetLQ52xTCVwbLqENB8PJQpv4an?usp=drive_link
+- Github - https://github.com/koaLaMoucho/FEUP-Mod-Sim
