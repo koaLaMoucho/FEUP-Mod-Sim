@@ -2,7 +2,7 @@
 ## Delivery Organizations
 - Slide-deck presentations: docs folder
 - Report: PDF in docs folder and Overleaf shared link at the bottom of the page- 
-- Short Video: Link at the bottom of the page
+- Short Video: Link at the bottom of the page or docs/videos
 - Source code: Python files
 - HOWTO file is this one
 
@@ -61,3 +61,4 @@ From each simulation, the model generates values for key performance indicators 
 ## Important Links
 
 - [Project Report](https://www.overleaf.com/read/krmqwqbwgrjh#fad616)
+- [Videos](https://drive.google.com/drive/folders/1FCdXKTetLQ52xTCVwbLqENB8PJQpv4an?usp=drive_link)
